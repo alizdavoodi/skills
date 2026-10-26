@@ -35,14 +35,17 @@ if (cmd === "models") {
 `;
 
 const LEVELS = ["low", "medium", "high", "xhigh", "max"];
-const model = (provider, id, thinking = LEVELS) => ({
+const model = (provider, id, thinking = LEVELS, kind = "chat") => ({
 	provider,
-	kind: "chat",
+	kind,
 	id,
 	selector: `${provider}/${id}`,
 	thinking,
 	input: ["text", "image"],
 });
+
+const JUDGE = (thinking = ["low", "medium", "high"]) => model("typesafe", "jev-1.14.0", thinking, "judge");
+const WITH_JUDGE = (thinking) => [...TWO_FAMILIES, JUDGE(thinking)];
 
 const TWO_FAMILIES = [
 	model("acme", "claude-opus-5-5"),
@@ -105,11 +108,11 @@ describe("apply-models", () => {
 		assert.ok(roles.advisor, "pstack roles are still filled");
 	});
 
-	test("a fresh resolve puts advisor and judge on different models when two families exist", () => {
+	test("a fresh resolve puts advisor and second_opinion on different models when two families exist", () => {
 		const r = run(["--budget", "large"]);
 		assert.equal(r.status, 0, r.stderr);
 		const roles = r.written("modelRoles");
-		assert.notEqual(base(roles.advisor), base(roles.judge));
+		assert.notEqual(base(roles.advisor), base(roles.second_opinion));
 	});
 
 	test("an existing user agent mapping is preserved", () => {
@@ -129,7 +132,7 @@ describe("apply-models", () => {
 	});
 
 	test("an unavailable explicit model is rejected, not substituted", () => {
-		const r = run(["--budget", "large", "--role", "judge=nowhere/missing-model"]);
+		const r = run(["--budget", "large", "--role", "second_opinion=nowhere/missing-model"]);
 		assert.notEqual(r.status, 0);
 		assert.equal(r.calls.length, 0);
 	});
@@ -142,14 +145,158 @@ describe("apply-models", () => {
 	});
 
 	test("a stale persisted role is re-picked instead of failing", () => {
-		const r = run(["--budget", "large"], { config: { modelRoles: { judge: "gone/old-model" } } });
+		const r = run(["--budget", "large"], { config: { modelRoles: { second_opinion: "gone/old-model" } } });
 		assert.equal(r.status, 0, r.stderr);
-		assert.ok(r.written("modelRoles").judge.startsWith("acme/") || r.written("modelRoles").judge.startsWith("beta/"));
+		assert.ok(r.written("modelRoles").second_opinion.startsWith("acme/") || r.written("modelRoles").second_opinion.startsWith("beta/"));
 	});
 
 	test("with one family, resolve still succeeds", () => {
 		const r = run(["--budget", "large"], { catalog: ONE_FAMILY });
 		assert.equal(r.status, 0, r.stderr);
-		assert.ok(r.written("modelRoles").judge);
+		assert.ok(r.written("modelRoles").second_opinion);
+	});
+
+	test("an explicit judge-kind model is accepted for the judge role", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large", "--role", "judge=typesafe/jev-1.14.0:high"], { catalog });
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").judge, "typesafe/jev-1.14.0:high");
+	});
+
+	test("a persisted judge-kind judge survives a re-run instead of being re-picked", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large"], { catalog, config: { modelRoles: { judge: "typesafe/jev-1.14.0:high" } } });
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").judge, "typesafe/jev-1.14.0:high");
+		assert.ok(!r.stdout.includes("re-picked"), "no re-pick note for a model that is present");
+	});
+
+	test("a judge-kind model is rejected for a chat role", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large", "--role", "advisor=typesafe/jev-1.14.0:high"], { catalog });
+		assert.notEqual(r.status, 0);
+		assert.equal(r.calls.length, 0);
+	});
+
+	test("a judge-kind model is rejected for an agent, which needs a chat model", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large", "--agent", "security-reviewer=typesafe/jev-1.14.0:high"], { catalog });
+		assert.notEqual(r.status, 0);
+		assert.equal(r.calls.length, 0);
+	});
+
+	test("a tiny-kind model is accepted for the judge role", () => {
+		const catalog = [...TWO_FAMILIES, model("acme", "tiny-judge", ["low", "medium"], "tiny")];
+		const r = run(["--budget", "large", "--role", "judge=acme/tiny-judge:medium"], { catalog });
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").judge, "acme/tiny-judge:medium");
+	});
+
+	test("an auto-picked second opinion prefers a chat model over a judge-kind model", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large"], { catalog });
+		assert.equal(r.status, 0, r.stderr);
+		const second = base(r.written("modelRoles").second_opinion);
+		assert.ok(second.startsWith("acme/") || second.startsWith("beta/"), `second opinion picked ${second}, want a chat model`);
+	});
+
+	test("an unset judge role is never written or auto-picked", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large"], { catalog });
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").judge, undefined, "pstack does not choose omp's judge role");
+	});
+
+	test("a persisted judge role rides through a re-run untouched", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large"], {
+			catalog,
+			config: { modelRoles: { judge: "typesafe/jev-1.14.0:high" } },
+		});
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").judge, "typesafe/jev-1.14.0:high");
+		assert.ok(!r.stdout.includes("re-picked"), "a passthrough role is never re-picked");
+	});
+
+	test("security-reviewer never points at the judge role by default", () => {
+		const r = run(["--budget", "large"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("task.agentModelOverrides")["security-reviewer"], "@second_opinion");
+	});
+
+	test("the default agent map passes validation when judge sits on a judgment model", () => {
+		const catalog = WITH_JUDGE();
+		const r = run(["--budget", "large"], {
+			catalog,
+			config: { modelRoles: { judge: "typesafe/jev-1.14.0:high" } },
+		});
+		assert.equal(r.status, 0, r.stderr);
+	});
+});
+
+describe("effort notes", () => {
+	test("an explicit effort stronger than the budget produces no warning", () => {
+		const r = run(["--budget", "large", "--role", "task=acme/claude-opus-5-5:max"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(!/tops out at max, below the high/.test(r.stdout), r.stdout);
+	});
+
+	test("an explicit effort weaker than the budget is still reported", () => {
+		const r = run(["--budget", "large", "--role", "task=acme/claude-opus-5-5:medium"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(/tops out at medium, below the high/.test(r.stdout), r.stdout);
+	});
+});
+
+describe("review findings", () => {
+	const judgeCatalog = WITH_JUDGE;
+
+	test("the previous default security-reviewer mapping migrates instead of failing", () => {
+		const r = run(["--budget", "large"], {
+			catalog: judgeCatalog(),
+			config: {
+				modelRoles: { judge: "typesafe/jev-1.14.0:high" },
+				"task.agentModelOverrides": { "security-reviewer": "@judge" },
+			},
+		});
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("task.agentModelOverrides")["security-reviewer"], "@second_opinion");
+		assert.ok(/security-reviewer: migrated @judge to @second_opinion/.test(r.stdout), r.stdout);
+	});
+
+	test("an agent aliased to a role sitting on a judgment model is refused", () => {
+		const r = run(["--budget", "large", "--agent", "sonic=@judge"], {
+			catalog: judgeCatalog(),
+			config: { modelRoles: { judge: "typesafe/jev-1.14.0:high" } },
+		});
+		assert.notEqual(r.status, 0);
+		assert.equal(r.calls.length, 0);
+		assert.ok(/a spawnable agent needs a chat model/.test(r.stderr), r.stderr);
+	});
+
+	test("an auto-pick never hands a judgment model to a chat role", () => {
+		// The judgment model is listed first and no chat id matches a strong-tier
+		// pattern, so an unfiltered pick would fall back to it.
+		const catalog = [model("typesafe", "jev-1.14.0", LEVELS, "judge"), model("zeta", "plainchat-one"), model("zeta", "plainchat-two")];
+		const r = run(["--budget", "large"], { catalog });
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(r.written("modelRoles").advisor.startsWith("zeta/"), r.written("modelRoles").advisor);
+	});
+
+	test("an explicit judge effort the model does not support is refused", () => {
+		const r = run(["--budget", "large", "--role", "judge=typesafe/jev-1.14.0:max"], {
+			catalog: judgeCatalog(["low", "medium"]),
+		});
+		assert.notEqual(r.status, 0);
+		assert.equal(r.calls.length, 0);
+		assert.ok(/does not support max/.test(r.stderr), r.stderr);
+	});
+
+	test("a judge model without thinking support gets no effort suffix", () => {
+		const r = run(["--budget", "large", "--role", "judge=typesafe/jev-1.14.0"], {
+			catalog: judgeCatalog([]),
+		});
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").judge, "typesafe/jev-1.14.0");
 	});
 });
