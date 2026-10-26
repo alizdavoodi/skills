@@ -119,6 +119,39 @@ the physical directory under any install root.
 
 See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for upstream copyright notices.
 
+### Syncing with upstream
+
+`scripts/sync-upstream.mjs` adopts a newer pstack release without discarding the OMP rewrites. It merges
+three ways per file, with the recorded upstream commit as the base:
+
+```text
+ours   = this repo's file      (port, with OMP rewrites)
+base   = upstream at the pin   (what the port was adapted from)
+theirs = upstream at the target release
+```
+
+That keeps both sides' changes. A file the port never touched becomes identical to upstream. A file upstream
+did not touch keeps its port text. Where both changed the same lines, the script writes a `.merge` file and
+exits 1 for a human to resolve.
+
+```bash
+# See what a release adds, changes, and removes.
+./scripts/sync-upstream.mjs --report --pin d457567 --target <release-sha>
+
+# Preview, then apply. `--upstream` reuses a cursor/plugins checkout; omit it to clone.
+./scripts/sync-upstream.mjs --pin d457567 --target <release-sha> --upstream ../cursor-plugins --dry-run
+./scripts/sync-upstream.mjs --pin d457567 --target <release-sha> --upstream ../cursor-plugins
+```
+
+Three things the script cannot do, which stay manual:
+
+- Resolve a `.merge` conflict, because both sides changed the same line.
+- Rewrite host mechanisms inside newly added upstream text. A three-way merge carries new lines verbatim, so
+  a new skill arrives with Cursor paths and agent names intact. Rewrite them before committing.
+- Update the pin recorded above and in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) after a sync.
+
+`scripts/sync-upstream.test.mjs` covers the merge cases with throwaway upstream repositories.
+
 ## License
 
 MIT. See [`LICENSE`](LICENSE).
