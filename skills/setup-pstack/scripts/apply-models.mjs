@@ -42,14 +42,13 @@ const ROLES = {
 };
 
 // The agents OMP can spawn, and the role each one runs on. Panels get their
-// diversity from two places: reviewer and security-reviewer sit on different
+// diversity from two places. Reviewer and security-reviewer sit on different
 // roles, and `resolve` keeps `second_opinion` off the family `advisor` landed on.
-// The map alone does not make a panel independent; the resolved models do.
+// The map alone does not make a panel independent. The resolved models do.
 //
 // `security-reviewer` must not point at omp's `judge` role. That role is a
-// model-kind role that answers `find` and image questions, so it is usually a
-// judgment API, and a spawnable agent needs a chat model. The second opinion
-// lives in pstack's own `second_opinion` role instead.
+// model-kind role, so it is usually a judgment API. A spawnable agent needs a
+// chat model, so the second opinion lives in pstack's own `second_opinion` role.
 const AGENTS = {
 	scout: "@smol",
 	librarian: "@smol",
@@ -66,14 +65,15 @@ const AGENTS = {
 // allows it. `second_opinion` is the second opinion for `advisor`.
 const DIVERSE_FROM = { second_opinion: "advisor" };
 
-// omp roles the script may set but must never auto-pick or re-pick. `judge` is
-// omp's own model-kind role: a judgment runner answers `find`, image questions,
-// and `tui.autoGraph: smart`, while a tiny or chat model answers prompted
-// judgments. It backs no spawnable agent, so pstack does not choose it. Setting
-// it is explicit only, and a value already in config rides through untouched.
+// omp's `judge` role is a model-kind role. A judgment runner answers `find`, image
+// questions, and `tui.autoGraph: smart`. A tiny or chat model answers prompted
+// judgments. It backs no spawnable agent, so pstack carries it but never picks it.
 const PASSTHROUGH_ROLES = {
 	judge: { kinds: ["chat", "tiny", "judge"], use: "omp judgment runner: find, image questions, smart table charts" },
 };
+
+const ALL_ROLES = { ...ROLES, ...PASSTHROUGH_ROLES };
+const isRole = (role) => Object.hasOwn(ALL_ROLES, role);
 
 // Family preference per tier, best first. Matched against the model id.
 const TIERS = {
@@ -173,10 +173,9 @@ function familyOf(model, tier) {
 }
 
 // With `avoid`, only models outside that family qualify and no match yields null.
-// `kinds` drops models the role cannot accept, so an auto-pick never lands a
-// judgment-only model on a role or agent that needs a chat session. Chat models
-// win the unranked fallback for the same reason.
-function pick(models, spec, avoid = null, kinds = new Set(CHAT_KINDS)) {
+// `kinds` is required: `usable` holds every catalog kind, so an unfiltered pick
+// can hand a judgment API to a role that needs a chat session.
+function pick(models, spec, kinds, avoid = null) {
 	const allowed = (m) => kinds.has(m.kind);
 	const candidates = [...models.values()].filter((m) => allowed(m) && (spec.images ? m.images : true));
 	for (const pattern of TIERS[spec.tier]) {
@@ -184,8 +183,7 @@ function pick(models, spec, avoid = null, kinds = new Set(CHAT_KINDS)) {
 		const family = candidates.filter((m) => pattern.test(m.id) && !(avoid && avoid.test(m.id)));
 		if (family.length) return family.reduce((best, m) => (generation(m) > generation(best) ? m : best));
 	}
-	if (avoid) return null;
-	return candidates.find((m) => m.kind === "chat") ?? candidates[0];
+	return avoid ? null : candidates[0];
 }
 
 function resolve({ budget, roleOverrides, agentOverrides }) {
@@ -200,9 +198,8 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 
 	// Explicit input is a hard error. Only a stale persisted value is recovered.
 	for (const [role, selector] of Object.entries(roleOverrides)) {
-		if (!Object.hasOwn(ROLES, role) && !Object.hasOwn(PASSTHROUGH_ROLES, role)) {
-			const known = [...Object.keys(ROLES), ...Object.keys(PASSTHROUGH_ROLES)];
-			throw new Error(`--role ${role}=${selector}: unknown role, expected one of ${known.join(", ")}`);
+		if (!isRole(role)) {
+			throw new Error(`--role ${role}=${selector}: unknown role, expected one of ${Object.keys(ALL_ROLES).join(", ")}`);
 		}
 		const model = usable.get(split(selector).base);
 		if (!model) {
@@ -220,13 +217,20 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	const picked = {};
 	const notes = [];
 
-	// A passthrough role is written only when named explicitly. Left alone, any
-	// value already in config stays exactly as it is. An explicit selector keeps
-	// its own effort, and otherwise gets the strong budget's effort.
+	// A passthrough role changes only when the caller names it. An explicit
+	// selector keeps its own effort. Without one it takes the strong budget's
+	// effort, and it gets no suffix when the model sets no reasoning effort.
 	for (const [role, selector] of Object.entries(roleOverrides)) {
 		if (!Object.hasOwn(PASSTHROUGH_ROLES, role)) continue;
 		const { base, effort } = split(selector);
-		roles[role] = `${base}:${effort ?? fitEffort(usable.get(base), targets.strong) ?? LADDER.at(-1)}`;
+		const model = usable.get(base);
+		if (effort && !model.thinking.includes(effort)) {
+			throw new Error(
+				`--role ${role}=${selector}: ${model.id} does not support ${effort}, it supports ${model.thinking.join(", ") || "no reasoning effort"}`,
+			);
+		}
+		const resolved = effort ?? fitEffort(model, targets.strong);
+		roles[role] = resolved ? `${base}:${resolved}` : base;
 	}
 
 	for (const [role, spec] of Object.entries(ROLES)) {
@@ -246,13 +250,13 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 			const from = picked[DIVERSE_FROM[role]];
 			const family = familyOf(from, spec.tier);
 			if (family) {
-				model = pick(usable, spec, family, kindsFor(role));
+				model = pick(usable, spec, kindsFor(role), family);
 				if (!model) {
 					notes.push(`${role}: no ${spec.tier} model outside ${DIVERSE_FROM[role]}'s family, so it shares ${from.id}`);
 				}
 			}
 		}
-		if (!model) model = pick(usable, spec, null, kindsFor(role));
+		if (!model) model = pick(usable, spec, kindsFor(role));
 		if (!model) throw new Error(`no usable model for role ${role}`);
 		picked[role] = model;
 
@@ -271,9 +275,20 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	// An agent the user already mapped keeps that mapping, the same way a role
 	// keeps its model. The defaults only fill agents that were never set.
 	const agents = { ...AGENTS, ...currentAgents, ...agentOverrides };
+
+	// `security-reviewer: @judge` was the default this script wrote before
+	// `second_opinion` existed. It is a pstack default, not a user choice, so a
+	// rerun rewrites it instead of refusing to write anything.
+	const migrated = new Set();
+	if (agents["security-reviewer"] === "@judge" && !agentOverrides["security-reviewer"]) {
+		agents["security-reviewer"] = AGENTS["security-reviewer"];
+		migrated.add("security-reviewer");
+		notes.push(`security-reviewer: migrated @judge to ${AGENTS["security-reviewer"]}`);
+	}
+
 	for (const [agent, fallback] of Object.entries(AGENTS)) {
 		const current = currentAgents[agent];
-		if (current && current !== fallback && !agentOverrides[agent]) {
+		if (current && current !== fallback && !agentOverrides[agent] && !migrated.has(agent)) {
 			notes.push(`${agent}: kept ${current}, the pstack default is ${fallback}`);
 		}
 	}
@@ -281,11 +296,11 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 		if (typeof value !== "string") throw new Error(`agent ${agent} has a non-string mapping`);
 		if (value.startsWith("@")) {
 			const role = value.slice(1);
-			if (!Object.hasOwn(ROLES, role)) throw new Error(`agent ${agent} points at unknown role ${value}`);
+			if (!isRole(role)) throw new Error(`agent ${agent} points at unknown role ${value}`);
 			// The alias is only as good as what the role currently resolves to. A
 			// spawnable agent runs a chat session, so a role sitting on a judgment or
 			// image model breaks the spawn with "No model selected" instead of here.
-			const resolved = usable.get(split(String(roles[role])).base);
+			const resolved = usable.get(split(String(roles[role] ?? "")).base);
 			if (resolved && !CHAT_KINDS.includes(resolved.kind)) {
 				throw new Error(
 					`agent ${agent} points at ${value}, which resolves to ${resolved.id}, a ${resolved.kind} model; a spawnable agent needs a chat model`,
@@ -324,14 +339,11 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 
 function table(roles, agents) {
 	const lines = ["role          model                                        used for"];
-	for (const [role, spec] of Object.entries(ROLES)) {
-		lines.push(`${role.padEnd(13)} ${String(roles[role] ?? "unset").padEnd(44)} ${spec.use}`);
-	}
-	for (const [role, spec] of Object.entries(PASSTHROUGH_ROLES)) {
+	for (const [role, spec] of Object.entries(ALL_ROLES)) {
 		lines.push(`${role.padEnd(13)} ${String(roles[role] ?? "unset").padEnd(44)} ${spec.use}`);
 	}
 	for (const [role, value] of Object.entries(roles)) {
-		if (Object.hasOwn(ROLES, role) || Object.hasOwn(PASSTHROUGH_ROLES, role)) continue;
+		if (isRole(role)) continue;
 		lines.push(`${role.padEnd(13)} ${String(value).padEnd(44)} not a pstack role, left untouched`);
 	}
 	lines.push("", "agent                model");

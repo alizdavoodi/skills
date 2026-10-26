@@ -12,11 +12,11 @@ model follows the **role** and the **agent**. Two settings decide everything.
   `tiny`, `commit`) to a `provider/model[:effort]` selector.
 - `task.agentModelOverrides` maps each spawnable agent to a selector or an `@role` alias.
 
-`judge` is omp's role, not pstack's, and the script leaves it alone. It is a model-kind role that answers
+`judge` belongs to omp, not to pstack, and the script leaves it alone. It is a model-kind role. It answers
 `find`, image questions, and `tui.autoGraph: smart`, so it is usually a judgment API such as TypeSafe Jev.
-A spawnable agent runs a chat session and needs a chat model, which is why `security-reviewer` must not point
-at `@judge`. pstack's second opinion lives in its own `second_opinion` role. Set `judge` explicitly with
-`--role judge=<provider>/<model>`, and a value already in config rides through every re-run untouched.
+A spawnable agent runs a chat session, so it needs a chat model. That is why `security-reviewer` must not
+point at `@judge`. pstack's second opinion lives in its own `second_opinion` role. Set `judge` explicitly with
+`--role judge=<provider>/<model>`. A value already in config survives every re-run unchanged.
 
 Configuring pstack on OMP means setting those two records coherently. `scripts/apply-models.mjs` does the
 arithmetic; this skill runs it and owns the conversation around it.
