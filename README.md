@@ -137,11 +137,11 @@ exits 1 for a human to resolve.
 
 ```bash
 # See what a release adds, changes, and removes.
-./scripts/sync-upstream.mjs --report --pin b1a1298 --target <release-sha>
+./scripts/sync-upstream.mjs --report --pin 99b609a --target <release-sha>
 
 # Preview, then apply. `--upstream` reuses a cursor/plugins checkout; omit it to clone.
-./scripts/sync-upstream.mjs --pin b1a1298 --target <release-sha> --upstream ../cursor-plugins --dry-run
-./scripts/sync-upstream.mjs --pin b1a1298 --target <release-sha> --upstream ../cursor-plugins
+./scripts/sync-upstream.mjs --pin 99b609a --target <release-sha> --upstream ../cursor-plugins --dry-run
+./scripts/sync-upstream.mjs --pin 99b609a --target <release-sha> --upstream ../cursor-plugins
 ```
 
 Three things the script cannot do, which stay manual:
