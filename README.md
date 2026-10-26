@@ -111,7 +111,8 @@ the physical directory under any install root.
 ## Provenance
 
 - The catalog is adapted from Lauren Tan's [`pstack`](https://github.com/cursor/plugins/tree/main/pstack),
-  version 0.15.28 (`cursor/plugins` at `d457567`).
+  version 0.15.32 (`cursor/plugins` at `b1a1298`), with the pstack fixes merged through
+  `99b609a`.
 - `orchestrate-omp` began as Eric Provencher's
   [`orchestrate`](https://github.com/provencher/codex-skills/tree/main/orchestrate) and is now OMP-native.
 - `pstack-omp`, `fable-deslop`, and the OMP integration, including `setup-pstack`'s model helper, are
@@ -136,11 +137,11 @@ exits 1 for a human to resolve.
 
 ```bash
 # See what a release adds, changes, and removes.
-./scripts/sync-upstream.mjs --report --pin d457567 --target <release-sha>
+./scripts/sync-upstream.mjs --report --pin 99b609a --target <release-sha>
 
 # Preview, then apply. `--upstream` reuses a cursor/plugins checkout; omit it to clone.
-./scripts/sync-upstream.mjs --pin d457567 --target <release-sha> --upstream ../cursor-plugins --dry-run
-./scripts/sync-upstream.mjs --pin d457567 --target <release-sha> --upstream ../cursor-plugins
+./scripts/sync-upstream.mjs --pin 99b609a --target <release-sha> --upstream ../cursor-plugins --dry-run
+./scripts/sync-upstream.mjs --pin 99b609a --target <release-sha> --upstream ../cursor-plugins
 ```
 
 Three things the script cannot do, which stay manual:
