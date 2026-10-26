@@ -34,6 +34,14 @@ const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 // This port's own skills, which have no upstream counterpart.
 const PORT_ONLY = new Set(["fable-deslop", "orchestrate-omp", "pstack-omp"]);
 
+// Cursor mechanisms that have no OMP equal, or a named replacement. A merged
+// file that gains one needs a translation the merge itself cannot make, and a
+// clean merge reports no conflict line, so the run has to point at the file.
+// Deliberately narrow: prose that merely names Cursor or Bugbot while
+// explaining the port is correct, so bare product words stay out.
+const HOST_TOKENS =
+	/\.cursor\/|\.mdc\b|subagent_type|environment: "?(cloud|local)"?|run_in_background|readonly:|generalPurpose|AskQuestion|cloud_base_branch|file_attachments|plugins\/cache|cursor-team-kit|inherit-parent/;
+
 function git(args, options = {}) {
 	return execFileSync("git", args, { encoding: "utf8", maxBuffer: 64 << 20, ...options }).trim();
 }
@@ -159,6 +167,19 @@ function mergeThreeWay(ours, base, theirs) {
 	}
 }
 
+// Host tokens present in the merged text that were not in the port's copy.
+// Those are the lines upstream just delivered, so they are the ones that may
+// need a translation the port has not made yet.
+function newHostTokens(merged, ours) {
+	const before = new Set((ours.toString("utf8").match(new RegExp(HOST_TOKENS, "g")) ?? []).map((s) => s.toLowerCase()));
+	const seen = new Set();
+	for (const match of merged.toString("utf8").matchAll(new RegExp(HOST_TOKENS, "g"))) {
+		const token = match[0].toLowerCase();
+		if (!before.has(token)) seen.add(match[0]);
+	}
+	return [...seen];
+}
+
 function main(argv) {
 	const args = parseArgs(argv);
 	if (args.help) {
@@ -212,6 +233,7 @@ function main(argv) {
 		// failure partway through would otherwise leave the port half-synced.
 		const writes = [];
 		const modes = new Map();
+		const hostFlags = [];
 
 		function conflict(path, reason, text, exec = null) {
 			conflicts.push({ path, reason });
@@ -279,6 +301,10 @@ function main(argv) {
 			if (text.equals(ours) && exec === oursExec) continue;
 			updated.push(path);
 			writes.push([oursFile, text, exec === oursExec ? null : exec]);
+			// Only tokens the port file did not already carry. A file that keeps
+			// its own translated wording is fine even if it mentions Cursor.
+			const fresh = newHostTokens(text, ours);
+			if (fresh.length) hostFlags.push({ path, tokens: fresh });
 		}
 
 		for (const path of [...pinFiles.keys()].sort()) {
@@ -312,6 +338,12 @@ function main(argv) {
 		for (const path of updated) console.log(`  update   ${path}`);
 		for (const c of conflicts) console.log(`  conflict ${c.path} (${c.reason})${args.dryRun ? "" : ", see .merge"}`);
 		for (const path of removed) console.log(`  removed upstream, kept here ${path}`);
+
+		if (hostFlags.length) {
+			console.log("\nhost mechanisms the port has not translated:");
+			for (const f of hostFlags) console.log(`  host     ${f.path} (${f.tokens.join(", ")})`);
+			console.log("\nSee skill://pstack-omp/references/host-translation.md. A clean merge still carries new upstream lines verbatim.");
+		}
 
 		if (conflicts.length && !args.dryRun) {
 			console.log("\nResolve each .merge file, then delete it. A conflict means both sides changed the same line.");
