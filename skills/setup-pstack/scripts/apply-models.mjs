@@ -32,7 +32,7 @@ const ROLES = {
 	slow: { tier: "strong", use: "hardest tasks, the root session's deep work" },
 	plan: { tier: "strong", use: "multi-phase plans, architect runners" },
 	advisor: { tier: "strong", use: "judgment and prose: how explainer, why synthesizer, reflect judgment, reviewers" },
-	judge: { tier: "strong", use: "arena cross-judge pool, the second opinion in a panel" },
+	second_opinion: { tier: "strong", use: "arena cross-judge pool, the second opinion in a panel" },
 	task: { tier: "mid", use: "implementers: feature, bug-fix, refactoring, perf-issue, hillclimb, swarm workers" },
 	designer: { tier: "mid", use: "UI and visual work" },
 	vision: { tier: "mid", use: "reading screenshots and design comps", images: true },
@@ -43,13 +43,18 @@ const ROLES = {
 
 // The agents OMP can spawn, and the role each one runs on. Panels get their
 // diversity from two places: reviewer and security-reviewer sit on different
-// roles, and `resolve` keeps `judge` off the family `advisor` landed on. The
-// map alone does not make a panel independent; the resolved models do.
+// roles, and `resolve` keeps `second_opinion` off the family `advisor` landed on.
+// The map alone does not make a panel independent; the resolved models do.
+//
+// `security-reviewer` must not point at omp's `judge` role. That role is a
+// model-kind role that answers `find` and image questions, so it is usually a
+// judgment API, and a spawnable agent needs a chat model. The second opinion
+// lives in pstack's own `second_opinion` role instead.
 const AGENTS = {
 	scout: "@smol",
 	librarian: "@smol",
 	reviewer: "@advisor",
-	"security-reviewer": "@judge",
+	"security-reviewer": "@second_opinion",
 	task: "@task",
 	sonic: "@tiny",
 	"poteto-agent": "@task",
@@ -58,8 +63,17 @@ const AGENTS = {
 };
 
 // Roles that must not share a model family with another role when the catalog
-// allows it. `judge` is the second opinion for `advisor`.
-const DIVERSE_FROM = { judge: "advisor" };
+// allows it. `second_opinion` is the second opinion for `advisor`.
+const DIVERSE_FROM = { second_opinion: "advisor" };
+
+// omp roles the script may set but must never auto-pick or re-pick. `judge` is
+// omp's own model-kind role: a judgment runner answers `find`, image questions,
+// and `tui.autoGraph: smart`, while a tiny or chat model answers prompted
+// judgments. It backs no spawnable agent, so pstack does not choose it. Setting
+// it is explicit only, and a value already in config rides through untouched.
+const PASSTHROUGH_ROLES = {
+	judge: { kinds: ["chat", "tiny", "judge"], use: "omp judgment runner: find, image questions, smart table charts" },
+};
 
 // Family preference per tier, best first. Matched against the model id.
 const TIERS = {
@@ -98,14 +112,19 @@ function getConfig(key, fallback = {}) {
 	return value;
 }
 
+// A role accepts only some model kinds. Every pstack role, and every spawnable
+// agent, runs a chat session and needs a chat model.
+const CHAT_KINDS = ["chat"];
+const kindsFor = (role) => new Set(PASSTHROUGH_ROLES[role]?.kinds ?? CHAT_KINDS);
+
 function catalog() {
-	const models = JSON.parse(omp("models", "--json")).models ?? [];
+	const models = JSON.parse(omp("models", "--kind", "all", "--json")).models ?? [];
 	const bySelector = new Map();
 	for (const m of models) {
-		if (m.kind && m.kind !== "chat") continue;
 		bySelector.set(m.selector, {
 			selector: m.selector,
 			id: m.id ?? m.selector,
+			kind: m.kind ?? "chat",
 			thinking: m.thinking ?? [],
 			images: (m.input ?? []).includes("image"),
 		});
@@ -154,14 +173,19 @@ function familyOf(model, tier) {
 }
 
 // With `avoid`, only models outside that family qualify and no match yields null.
-function pick(models, spec, avoid = null) {
-	const candidates = [...models.values()].filter((m) => (spec.images ? m.images : true));
+// `kinds` drops models the role cannot accept, so an auto-pick never lands a
+// judgment-only model on a role or agent that needs a chat session. Chat models
+// win the unranked fallback for the same reason.
+function pick(models, spec, avoid = null, kinds = new Set(CHAT_KINDS)) {
+	const allowed = (m) => kinds.has(m.kind);
+	const candidates = [...models.values()].filter((m) => allowed(m) && (spec.images ? m.images : true));
 	for (const pattern of TIERS[spec.tier]) {
 		if (pattern === avoid) continue;
 		const family = candidates.filter((m) => pattern.test(m.id) && !(avoid && avoid.test(m.id)));
 		if (family.length) return family.reduce((best, m) => (generation(m) > generation(best) ? m : best));
 	}
-	return avoid ? null : candidates[0];
+	if (avoid) return null;
+	return candidates.find((m) => m.kind === "chat") ?? candidates[0];
 }
 
 function resolve({ budget, roleOverrides, agentOverrides }) {
@@ -176,11 +200,18 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 
 	// Explicit input is a hard error. Only a stale persisted value is recovered.
 	for (const [role, selector] of Object.entries(roleOverrides)) {
-		if (!Object.hasOwn(ROLES, role)) {
-			throw new Error(`--role ${role}=${selector}: unknown role, expected one of ${Object.keys(ROLES).join(", ")}`);
+		if (!Object.hasOwn(ROLES, role) && !Object.hasOwn(PASSTHROUGH_ROLES, role)) {
+			const known = [...Object.keys(ROLES), ...Object.keys(PASSTHROUGH_ROLES)];
+			throw new Error(`--role ${role}=${selector}: unknown role, expected one of ${known.join(", ")}`);
 		}
-		if (!usable.has(split(selector).base)) {
+		const model = usable.get(split(selector).base);
+		if (!model) {
 			throw new Error(`--role ${role}=${selector}: ${split(selector).base} is not in the usable catalog`);
+		}
+		if (!kindsFor(role).has(model.kind)) {
+			throw new Error(
+				`--role ${role}=${selector}: ${model.id} is a ${model.kind} model, but ${role} accepts ${[...kindsFor(role)].join(", ")}`,
+			);
 		}
 	}
 
@@ -188,6 +219,16 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	const roles = { ...currentRoles };
 	const picked = {};
 	const notes = [];
+
+	// A passthrough role is written only when named explicitly. Left alone, any
+	// value already in config stays exactly as it is. An explicit selector keeps
+	// its own effort, and otherwise gets the strong budget's effort.
+	for (const [role, selector] of Object.entries(roleOverrides)) {
+		if (!Object.hasOwn(PASSTHROUGH_ROLES, role)) continue;
+		const { base, effort } = split(selector);
+		roles[role] = `${base}:${effort ?? fitEffort(usable.get(base), targets.strong) ?? LADDER.at(-1)}`;
+	}
+
 	for (const [role, spec] of Object.entries(ROLES)) {
 		const override = roleOverrides[role];
 		let model = null;
@@ -195,20 +236,23 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 			model = usable.get(split(override).base);
 		} else if (currentRoles[role]) {
 			const base = split(String(currentRoles[role])).base;
-			model = usable.get(base) ?? null;
+			const persisted = usable.get(base) ?? null;
+			// A persisted model of the wrong kind cannot serve this role, so it is
+			// re-picked like one that left the catalog.
+			model = persisted && kindsFor(role).has(persisted.kind) ? persisted : null;
 			if (!model) notes.push(`${role}: ${base} is not in the usable catalog, re-picked`);
 		}
 		if (!model && DIVERSE_FROM[role] && picked[DIVERSE_FROM[role]]) {
 			const from = picked[DIVERSE_FROM[role]];
 			const family = familyOf(from, spec.tier);
 			if (family) {
-				model = pick(usable, spec, family);
+				model = pick(usable, spec, family, kindsFor(role));
 				if (!model) {
 					notes.push(`${role}: no ${spec.tier} model outside ${DIVERSE_FROM[role]}'s family, so it shares ${from.id}`);
 				}
 			}
 		}
-		if (!model) model = pick(usable, spec);
+		if (!model) model = pick(usable, spec, null, kindsFor(role));
 		if (!model) throw new Error(`no usable model for role ${role}`);
 		picked[role] = model;
 
@@ -218,7 +262,7 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 			notes.push(`${role}: ${model.id} does not support ${effort}`);
 			effort = fitEffort(model, effort);
 		}
-		if (effort && effort !== target && !spec.pin) {
+		if (effort && effort !== target && !spec.pin && LADDER.indexOf(effort) > LADDER.indexOf(target)) {
 			notes.push(`${role}: ${model.id} tops out at ${effort}, below the ${target} the budget asked for`);
 		}
 		roles[role] = effort ? `${model.selector}:${effort}` : model.selector;
@@ -236,12 +280,27 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	for (const [agent, value] of Object.entries(agents)) {
 		if (typeof value !== "string") throw new Error(`agent ${agent} has a non-string mapping`);
 		if (value.startsWith("@")) {
-			if (!Object.hasOwn(ROLES, value.slice(1))) throw new Error(`agent ${agent} points at unknown role ${value}`);
+			const role = value.slice(1);
+			if (!Object.hasOwn(ROLES, role)) throw new Error(`agent ${agent} points at unknown role ${value}`);
+			// The alias is only as good as what the role currently resolves to. A
+			// spawnable agent runs a chat session, so a role sitting on a judgment or
+			// image model breaks the spawn with "No model selected" instead of here.
+			const resolved = usable.get(split(String(roles[role])).base);
+			if (resolved && !CHAT_KINDS.includes(resolved.kind)) {
+				throw new Error(
+					`agent ${agent} points at ${value}, which resolves to ${resolved.id}, a ${resolved.kind} model; a spawnable agent needs a chat model`,
+				);
+			}
 			continue;
 		}
 		const { base, effort } = split(value);
 		const model = usable.get(base);
 		if (!model) throw new Error(`agent ${agent} points at ${value}, which is not in the usable catalog`);
+		if (!CHAT_KINDS.includes(model.kind)) {
+			throw new Error(
+				`agent ${agent} points at ${value}, which is a ${model.kind} model; a spawnable agent needs a chat model`,
+			);
+		}
 		if (effort && !model.thinking.includes(effort)) {
 			throw new Error(`agent ${agent} points at ${value}, but ${model.id} does not support ${effort}`);
 		}
@@ -256,7 +315,7 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	if (panel[0] === panel[1]) {
 		const via = seats.map((a) => `${a}=${agents[a]}`).join(", ");
 		notes.push(
-			`panel agents reviewer and security-reviewer both resolve to ${panel[0]} (${via}); split them with --agent security-reviewer=@judge, or give their roles different models with --role <role>=<provider>/<model>`,
+			`panel agents reviewer and security-reviewer both resolve to ${panel[0]} (${via}); split them with --agent security-reviewer=@second_opinion, or give their roles different models with --role <role>=<provider>/<model>`,
 		);
 	}
 
@@ -268,8 +327,11 @@ function table(roles, agents) {
 	for (const [role, spec] of Object.entries(ROLES)) {
 		lines.push(`${role.padEnd(13)} ${String(roles[role] ?? "unset").padEnd(44)} ${spec.use}`);
 	}
+	for (const [role, spec] of Object.entries(PASSTHROUGH_ROLES)) {
+		lines.push(`${role.padEnd(13)} ${String(roles[role] ?? "unset").padEnd(44)} ${spec.use}`);
+	}
 	for (const [role, value] of Object.entries(roles)) {
-		if (Object.hasOwn(ROLES, role)) continue;
+		if (Object.hasOwn(ROLES, role) || Object.hasOwn(PASSTHROUGH_ROLES, role)) continue;
 		lines.push(`${role.padEnd(13)} ${String(value).padEnd(44)} not a pstack role, left untouched`);
 	}
 	lines.push("", "agent                model");

@@ -8,9 +8,15 @@ description: Configure which models pstack uses per role and at what reasoning b
 Upstream pstack picks a model per call. OMP does not work that way: a `task` item carries no model, so the
 model follows the **role** and the **agent**. Two settings decide everything.
 
-- `modelRoles` maps each role (`slow`, `plan`, `advisor`, `judge`, `task`, `designer`, `vision`, `smol`,
+- `modelRoles` maps each role (`slow`, `plan`, `advisor`, `second_opinion`, `task`, `designer`, `vision`, `smol`,
   `tiny`, `commit`) to a `provider/model[:effort]` selector.
 - `task.agentModelOverrides` maps each spawnable agent to a selector or an `@role` alias.
+
+`judge` is omp's role, not pstack's, and the script leaves it alone. It is a model-kind role that answers
+`find`, image questions, and `tui.autoGraph: smart`, so it is usually a judgment API such as TypeSafe Jev.
+A spawnable agent runs a chat session and needs a chat model, which is why `security-reviewer` must not point
+at `@judge`. pstack's second opinion lives in its own `second_opinion` role. Set `judge` explicitly with
+`--role judge=<provider>/<model>`, and a value already in config rides through every re-run untouched.
 
 Configuring pstack on OMP means setting those two records coherently. `scripts/apply-models.mjs` does the
 arithmetic; this skill runs it and owns the conversation around it.
@@ -49,7 +55,7 @@ The budget sets the effort token per tier, not per model:
 
 | tier | roles | unlimited | large | medium | small |
 |---|---|---|---|---|---|
-| strong | `slow`, `plan`, `advisor`, `judge` | max | xhigh | high | medium |
+| strong | `slow`, `plan`, `advisor`, `second_opinion` | max | xhigh | high | medium |
 | mid | `task`, `designer`, `vision` | xhigh | high | medium | low |
 | small | `smol` | high | high | medium | low |
 | pinned | `tiny`, `commit` | low | low | low | low |
@@ -81,7 +87,7 @@ Read the `notes:` block out loud to the user. It reports four things that matter
 Offer the detected models as options through `ask`, not free text. Apply a change by passing it through:
 
 ```bash
-"$APPLY" --budget large --role judge=<provider>/<model>:high --agent sonic=@smol
+"$APPLY" --budget large --role second_opinion=<provider>/<model>:high --agent sonic=@smol
 ```
 
 An explicit `--role` with an effort token wins over the budget. An agent value is either a selector or an
@@ -104,10 +110,10 @@ config: `omp --profile <name>` has its own. New sessions and new subagent spawns
 
 If step 3 warned that `reviewer` and `security-reviewer` collapse onto one model, say plainly what is lost:
 cross-model review degenerates into self-review, and the independence that `skill://arena`'s cross-judge and
-`skill://interrogate`'s reviewer panel depend on is gone. A fresh run already puts `judge` on a different
+`skill://interrogate`'s reviewer panel depend on is gone. A fresh run already puts `second_opinion` on a different
 family from `advisor` when the catalog has one. If the warning remains, either only one family passes
-`enabledModels`, so admit a second and re-run, or `judge` was set earlier to the same model, so name another
-with `--role judge=<provider>/<model>`. Do not fake diversity by giving the same model two role names.
+`enabledModels`, so admit a second and re-run, or `second_opinion` was set earlier to the same model, so name another
+with `--role second_opinion=<provider>/<model>`. Do not fake diversity by giving the same model two role names.
 
 ### 7. Offer a verification skill (optional)
 
@@ -128,7 +134,7 @@ can generate one with `/skill:create-formal-verification-skill`." On no, move on
 | pstack role | OMP carrier |
 |---|---|
 | judgment and prose, how explainer, why synthesizer, reflect judgment and divergent and synthesizer, historical session consults | `advisor`, through the `reviewer`, `comment-sicko`, and `seance` agents |
-| arena cross-judge pool, the second opinion | `judge`, through the `security-reviewer` agent |
+| arena cross-judge pool, the second opinion | `second_opinion`, through the `security-reviewer` agent |
 | feature, bug-fix, refactoring, perf-issue, hillclimb, swarm workers, arena runners, UI work | `task`, through the `task` and `poteto-agent` agents |
 | how explorer, why investigators, reflect tooling | `smol`, through the `scout` and `librarian` agents |
 | mechanical arms | `tiny`, through the `sonic` agent |
