@@ -51,6 +51,8 @@ Present the synthesizer's full Accepted / Rejected / Backlog output and wait for
 
 File each Backlog item to your team's devex or backlog tracker without waiting. Only the Accepted list waits for approval.
 
+Never edit a skill through an installed plugin or registry cache. Before approval, show its destination: a path under `skills.customDirectories`, or a project `.omp/skills/<skill>/`. After approval, edit the source directory directly. Never open a PR or push.
+
 Follow each approved row's Routing exactly:
 
 - Trivial existing-skill edit (a one-line bullet, a tightened sentence, a stale fact corrected): the parent does it directly.
