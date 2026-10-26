@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, test } from "node:test";
@@ -27,8 +27,8 @@ function git(args, cwd) {
 
 // Builds an upstream repo with two commits: `pin` and `target`. `files` maps a
 // path under pstack/ to its content at the pin, and `targetFiles` overrides it
-// at the target.
-function upstream({ files, targetFiles = {}, removed = [] }) {
+// at the target. `executable` and `symlinks` shape the target commit only.
+function upstream({ files, targetFiles = {}, removed = [], executable = [], symlinks = {} }) {
 	const dir = join(root, `up-${n++}`);
 	mkdirSync(dir, { recursive: true });
 	git(["init", "-q", "-b", "main"], dir);
@@ -46,6 +46,8 @@ function upstream({ files, targetFiles = {}, removed = [] }) {
 		writeFileSync(join(dir, path), content);
 	}
 	for (const path of removed) rmSync(join(dir, path));
+	for (const path of executable) chmodSync(join(dir, path), 0o755);
+	for (const [path, to] of Object.entries(symlinks)) symlinkSync(to, join(dir, path));
 	git(["add", "-A"], dir);
 	git(["commit", "-q", "--allow-empty", "-m", "target"], dir);
 	const target = git(["rev-parse", "HEAD"], dir);
@@ -70,6 +72,7 @@ function run(dir, args) {
 
 const read = (dir, path) => readFileSync(join(dir, path), "utf8");
 const has = (dir, path) => existsSync(join(dir, path));
+const isExecutable = (dir, path) => (statSync(join(dir, path)).mode & 0o100) !== 0;
 
 describe("sync-upstream", () => {
 	test("keeps a port rewrite when upstream did not touch the file", () => {
@@ -146,10 +149,250 @@ describe("sync-upstream", () => {
 		assert.ok(has(p, "skills/gone/SKILL.md"), "port copy kept");
 	});
 
+	test("reads an upstream clone that has no work tree", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/how/SKILL.md": "b\n" },
+		});
+		const bare = join(root, `bare-${n++}`);
+		git(["clone", "-q", "--no-checkout", up.dir, bare], root);
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", bare, "--dry-run"]);
+		assert.equal(r.status, 0, r.stderr);
+		// Zero work would read as "the port is current", so it must see the edit.
+		assert.match(r.stdout, /would add 0, update 1/);
+	});
+
+	test("reads from the clone root when --upstream names a subdirectory", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/how/SKILL.md": "b\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		// git resolves pathspecs against the working directory, so this used to
+		// list no files and report a clean no-op.
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", join(up.dir, "pstack"), "--dry-run"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.match(r.stdout, /would add 0, update 1/);
+	});
+
+	test("refuses a commit that has no pstack/skills", () => {
+		const up = upstream({ files: { "pstack/skills/how/SKILL.md": "a\n" } });
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.target, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 2);
+		assert.match(r.stderr, /same commit|no pstack\/skills/);
+	});
+
+	test("carries a mode change even when the same file conflicts", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/run.sh": "line one\n" },
+			targetFiles: { "pstack/skills/how/run.sh": "line upstream\n" },
+			executable: ["pstack/skills/how/run.sh"],
+		});
+		const p = port({ "skills/how/run.sh": "line ported\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 1, "the text still needs a human");
+		// The bit is independent of the text, so leaving the port's 0644 loses it.
+		assert.ok(isExecutable(p, "skills/how/run.sh"), "exec bit applied despite the conflict");
+	});
+
+	test("writes nothing when the run fails partway", () => {
+		const up = upstream({
+			files: {
+				"pstack/skills/a/SKILL.md": "a\n",
+				"pstack/skills/z/SKILL.md": "z\n",
+			},
+			targetFiles: {
+				"pstack/skills/a/SKILL.md": "a, upstream\n",
+				"pstack/skills/z/SKILL.md": "z, upstream\n",
+			},
+			symlinks: { "pstack/skills/z-late": "SKILL.md" },
+		});
+		const p = port({ "skills/a/SKILL.md": "a\n", "skills/z/SKILL.md": "z\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 2, "the symlink is fatal");
+		// The sort puts a/ before z-late, so a per-file write would already have landed.
+		assert.equal(read(p, "skills/a/SKILL.md"), "a\n", "earlier file untouched");
+	});
+
 	test("requires both commits", () => {
 		const p = port({});
 		const r = run(p, ["--pin", "HEAD"]);
 		assert.equal(r.status, 2);
 		assert.match(r.stderr, /--pin and --target are required/);
+	});
+
+	test("adopts a new upstream script with its executable bit", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "how\n" },
+			targetFiles: { "pstack/skills/how/scripts/run.sh": "#!/bin/sh\n" },
+			executable: ["pstack/skills/how/scripts/run.sh"],
+		});
+		const p = port({ "skills/how/SKILL.md": "how\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(isExecutable(p, "skills/how/scripts/run.sh"), "100755 upstream stays executable here");
+		assert.ok(!isExecutable(p, "skills/how/SKILL.md"));
+	});
+
+	test("applies an executable bit upstream added to an existing file", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/scripts/run.sh": "#!/bin/sh\n" },
+			executable: ["pstack/skills/how/scripts/run.sh"],
+		});
+		const p = port({ "skills/how/scripts/run.sh": "#!/bin/sh\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.match(r.stdout, /did add 0, update 1,/);
+		assert.ok(isExecutable(p, "skills/how/scripts/run.sh"));
+	});
+
+	test("keeps a file the port deleted when upstream left it alone", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n", "pstack/skills/how/references/old.md": "old\n" },
+			targetFiles: { "pstack/skills/how/SKILL.md": "b\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.match(r.stdout, /did add 0, update 1, conflict 0,/);
+		assert.ok(!has(p, "skills/how/references/old.md"), "deletion survives the sync");
+	});
+
+	test("raises a conflict when upstream edited a file the port deleted", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n", "pstack/skills/how/references/old.md": "old\n" },
+			targetFiles: { "pstack/skills/how/references/old.md": "old, edited upstream\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 1, r.stderr);
+		assert.match(r.stdout, /did add 0, update 0, conflict 1,/);
+		assert.match(r.stdout, /conflict .*references\/old\.md \(deleted here, changed upstream\)/);
+		assert.equal(read(p, "skills/how/references/old.md.merge"), "old, edited upstream\n");
+		assert.ok(!has(p, "skills/how/references/old.md"), "deletion stands until a human decides");
+	});
+
+	test("refuses to run while a .merge from an earlier run is still on disk", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/how/SKILL.md": "b\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n", "skills/how/SKILL.md.merge": "half resolved\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 2);
+		assert.match(r.stderr, /skills\/how\/SKILL\.md\.merge/);
+		assert.equal(read(p, "skills/how/SKILL.md"), "a\n", "nothing synced");
+		assert.equal(read(p, "skills/how/SKILL.md.merge"), "half resolved\n", "human's edits kept");
+		const dry = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--dry-run"]);
+		assert.equal(dry.status, 0, "a dry run writes nothing, so it still previews");
+	});
+
+	test("rejects a pin equal to the target", () => {
+		const up = upstream({ files: { "pstack/skills/how/SKILL.md": "a\n" } });
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.pin, "--upstream", up.dir]);
+		assert.equal(r.status, 2);
+	});
+
+	test("rejects a target older than the pin instead of syncing backwards", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/how/SKILL.md": "b\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "b\n" });
+		const r = run(p, ["--pin", up.target, "--target", up.pin, "--upstream", up.dir]);
+		assert.equal(r.status, 2);
+		assert.equal(read(p, "skills/how/SKILL.md"), "b\n", "upstream edit not reverted");
+	});
+
+	test("treats a file both sides added identically as already synced", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/new/SKILL.md": "same\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n", "skills/new/SKILL.md": "same\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 0, r.stdout);
+		assert.match(r.stdout, /did add 0, update 0, conflict 0,/);
+	});
+
+	test("writes a .merge for a file both sides added differently", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/new/SKILL.md": "upstream\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n", "skills/new/SKILL.md": "port\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 1);
+		const merge = read(p, "skills/new/SKILL.md.merge");
+		assert.match(merge, /^<{7} .*\nport\n/m, "port side inside the markers");
+		assert.match(merge, /^={7}\nupstream\n>{7} /m, "upstream side inside the markers");
+		assert.equal(read(p, "skills/new/SKILL.md"), "port\n", "original untouched");
+	});
+
+	test("labels the sides of a conflict as port and target", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "name: how\n" },
+			targetFiles: { "pstack/skills/how/SKILL.md": "name: how, upstream\n" },
+		});
+		const p = port({ "skills/how/SKILL.md": "name: how, omp\n" });
+		run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		const merge = read(p, "skills/how/SKILL.md.merge");
+		assert.match(merge, /^<{7} port$/m);
+		assert.match(merge, /^>{7} target$/m);
+	});
+
+	test("copies a new binary file byte for byte", () => {
+		const bytes = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0xff, 0x00, 0xfe, 0x0a]);
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "a\n" },
+			targetFiles: { "pstack/skills/how/assets/logo.png": bytes },
+		});
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.deepEqual(readFileSync(join(p, "skills/how/assets/logo.png")), bytes);
+	});
+
+	test("takes an upstream binary change the port never touched", () => {
+		const before = Buffer.from([0x89, 0x50, 0xff, 0x00]);
+		const after = Buffer.from([0x89, 0x50, 0xfe, 0x00, 0x01]);
+		const up = upstream({
+			files: { "pstack/skills/how/assets/logo.png": before },
+			targetFiles: { "pstack/skills/how/assets/logo.png": after },
+		});
+		const p = port({ "skills/how/assets/logo.png": before });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 0, r.stdout);
+		assert.deepEqual(readFileSync(join(p, "skills/how/assets/logo.png")), after);
+	});
+
+	test("puts upstream's copy in the .merge when both sides changed a binary file", () => {
+		const before = Buffer.from([0x89, 0x50, 0xff, 0x00]);
+		const after = Buffer.from([0x89, 0x50, 0xfe, 0x00, 0x01]);
+		const up = upstream({
+			files: { "pstack/skills/how/assets/logo.png": before },
+			targetFiles: { "pstack/skills/how/assets/logo.png": after },
+		});
+		const ours = Buffer.from([0x89, 0x50, 0xaa, 0x00]);
+		const p = port({ "skills/how/assets/logo.png": ours });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 1);
+		assert.deepEqual(readFileSync(join(p, "skills/how/assets/logo.png.merge")), after);
+		assert.deepEqual(readFileSync(join(p, "skills/how/assets/logo.png")), ours, "original untouched");
+	});
+
+	test("rejects a symlink rather than writing its target path as file text", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/references/real.md": "real\n" },
+			symlinks: { "pstack/skills/how/references/alias.md": "real.md" },
+		});
+		const p = port({ "skills/how/references/real.md": "real\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir]);
+		assert.equal(r.status, 2);
+		assert.match(r.stderr, /alias\.md/);
+		assert.ok(!has(p, "skills/how/references/alias.md"));
 	});
 });
