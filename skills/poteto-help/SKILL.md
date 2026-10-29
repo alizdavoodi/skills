@@ -69,7 +69,7 @@ The default answer is `/skill:poteto-mode`, which runs most of the others when i
 | Understand a change or subsystem, explained plainly | `/skill:teach` (`skill://teach`) |
 | Catch up on their own recent work on a topic | `/skill:recall` (`skill://recall`) |
 | Catch up on what changed in this chat since their last message, in plain words and small visuals, with every item waiting on them listed and decidable from the reply alone | `/skill:ketchup` (`skill://ketchup`) |
-| Catch up like `/skill:ketchup`, in a short silent video of slides, with the waiting calls as text under it | `/skill:ketchup-video` (`skill://ketchup-video`) |
+| Catch up like `/skill:ketchup`, in a short subtitled video of slides, with the waiting calls as text under it | `/skill:ketchup-video` (`skill://ketchup-video`) |
 | Know what a small diff could break outside itself | `/skill:blast-radius` (`skill://blast-radius`) |
 | Settle types and module shape before code that crosses a function boundary | `/skill:architect` (`skill://architect`) |
 | Get several attempts at one brief, merged into the best one | `/skill:arena` (`skill://arena`) |
@@ -126,7 +126,7 @@ Playbooks are step lists inside `/skill:poteto-mode`, not skills, so they have n
 - "land the stack" runs Shipping.
 - "take over this branch" runs Session pickup.
 - "pause safely" runs Pause safely.
-- "full autopilot on this queue" runs Autopilot-full. "stack them, don't ship" runs Autopilot-stack.
+- "full autopilot on this queue" runs Autopilot-full. "stack them, don't ship" or "autopilot, don't merge" runs Autopilot-stack.
 - "run the eval playbook" runs Eval.
 
 Without `/skill:poteto-mode`, a phrase such as "babysit this pr" can match a different installed skill for the same job instead. The Playbooks section of `skill://poteto-mode` lists every playbook and when it applies.

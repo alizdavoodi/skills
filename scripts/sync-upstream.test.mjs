@@ -124,6 +124,42 @@ describe("sync-upstream", () => {
 		assert.equal(read(p, "skills/pstack-omp/SKILL.md"), "ours\n", "port-only skill untouched");
 	});
 
+	test("--exclude holds a whole skill back, including new files", () => {
+		const up = upstream({
+			files: {
+				"pstack/skills/how/SKILL.md": "how\n",
+				"pstack/skills/statechart/SKILL.md": "old\n",
+			},
+			targetFiles: {
+				"pstack/skills/how/SKILL.md": "how v2\n",
+				"pstack/skills/statechart/SKILL.md": "new\n",
+				"pstack/skills/statechart/scripts/run.ts": "run\n",
+			},
+		});
+		const p = port({ "skills/how/SKILL.md": "how\n", "skills/statechart/SKILL.md": "old\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--exclude", "statechart"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(read(p, "skills/statechart/SKILL.md"), "old\n", "held skill untouched");
+		assert.ok(!has(p, "skills/statechart/scripts/run.ts"), "its new files stay out");
+		assert.equal(read(p, "skills/how/SKILL.md"), "how v2\n", "other skills still sync");
+	});
+
+	test("--exclude also suppresses deletion of a held skill's files", () => {
+		const up = upstream({
+			files: {
+				"pstack/skills/how/SKILL.md": "how\n",
+				"pstack/skills/statechart/scripts/lib.mjs": "lib\n",
+			},
+			targetFiles: { "pstack/skills/how/SKILL.md": "how\n" },
+			removed: ["pstack/skills/statechart/scripts/lib.mjs"],
+		});
+		const p = port({ "skills/how/SKILL.md": "how\n", "skills/statechart/scripts/lib.mjs": "lib\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--exclude", "statechart"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(has(p, "skills/statechart/scripts/lib.mjs"), "excluded skill is not reported as removed");
+		assert.doesNotMatch(r.stdout, /statechart/);
+	});
+
 	test("a dry run writes nothing", () => {
 		const up = upstream({
 			files: { "pstack/skills/how/SKILL.md": "a\n" },

@@ -31,8 +31,11 @@ import { fileURLToPath } from "node:url";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 
-// This port's own skills, which have no upstream counterpart.
-const PORT_ONLY = new Set(["fable-deslop", "orchestrate-omp", "pstack-omp"]);
+// Skills the port owns outright, which the sync leaves alone. `setup-pstack`
+// counts: upstream writes a Cursor `.mdc` rule, and this port writes OMP's
+// `modelRoles` and `task.agentModelOverrides` through a script, so the two
+// share a name and nothing else.
+const PORT_ONLY = new Set(["fable-deslop", "orchestrate-omp", "pstack-omp", "setup-pstack"]);
 
 // Cursor mechanisms that have no OMP equal, or a named replacement. A merged
 // file that gains one needs a translation the merge itself cannot make, and a
@@ -47,7 +50,7 @@ function git(args, options = {}) {
 }
 
 function parseArgs(argv) {
-	const args = { pin: null, target: null, upstream: null, dryRun: false, report: false };
+	const args = { pin: null, target: null, upstream: null, dryRun: false, report: false, exclude: [] };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--pin") args.pin = argv[++i];
@@ -55,10 +58,18 @@ function parseArgs(argv) {
 		else if (a === "--upstream") args.upstream = argv[++i];
 		else if (a === "--dry-run") args.dryRun = true;
 		else if (a === "--report") args.report = true;
+		else if (a === "--exclude") args.exclude.push(...String(argv[++i]).split(",").map((s) => s.trim()).filter(Boolean));
 		else if (a === "--help" || a === "-h") args.help = true;
 		else throw new Error(`unknown argument ${a}`);
 	}
 	return args;
+}
+
+// An excluded skill is held back whole: a half-adopted skill whose SKILL.md and
+// scripts disagree is worse than one that stays a release behind. Names match
+// the skill directory, so `--exclude statechart` holds back every file under it.
+function excluded(name, excludes) {
+	return name !== null && excludes.has(name);
 }
 
 // A commit the clone already has. A commit without the mirrored tree would list
@@ -183,10 +194,11 @@ function newHostTokens(merged, ours) {
 function main(argv) {
 	const args = parseArgs(argv);
 	if (args.help) {
-		console.log("usage: sync-upstream.mjs --pin <sha> --target <sha> [--upstream <dir>] [--dry-run] [--report]");
+		console.log("usage: sync-upstream.mjs --pin <sha> --target <sha> [--upstream <dir>] [--exclude <skill,...>] [--dry-run] [--report]");
 		return;
 	}
 	if (!args.pin || !args.target) throw new Error("--pin and --target are required");
+	const excludes = new Set(args.exclude);
 
 	const { dir, temporary } = ensureCheckout(args.upstream);
 	try {
@@ -208,7 +220,8 @@ function main(argv) {
 				console.log("\nnew skills:");
 				for (const line of additions) {
 					const name = skillName(line.split("\t")[1]);
-					if (name) console.log(`  ${name}`);
+					if (!name) continue;
+					console.log(`  ${name}${excludes.has(name) ? " (excluded)" : ""}`);
 				}
 			}
 			return;
@@ -246,6 +259,7 @@ function main(argv) {
 		for (const path of [...targetFiles.keys()].sort()) {
 			const name = skillName(path);
 			if (name && PORT_ONLY.has(name)) continue;
+			if (excluded(name, excludes)) continue;
 
 			const theirs = targetFiles.get(path);
 			const base = pinFiles.get(path);
@@ -311,6 +325,7 @@ function main(argv) {
 			if (targetFiles.has(path)) continue;
 			const name = skillName(path);
 			if (name && PORT_ONLY.has(name)) continue;
+			if (excluded(name, excludes)) continue;
 			if (existsSync(portPath(path))) removed.push(path);
 		}
 
