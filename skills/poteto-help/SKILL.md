@@ -86,7 +86,7 @@ The default answer is `/skill:poteto-mode`, which runs most of the others when i
 | Bring a verification skill and its feature map back in line with the app | `/skill:maintain-verification-skill` (`skill://maintain-verification-skill`) |
 | Formally verify a race, invariant, or other property that tests rarely reach | `/skill:create-formal-verification-skill` (`skill://create-formal-verification-skill`) |
 | Bring a formal verification back in line after the code it covers changed, and learn whether a failure is drift or a bug | `/skill:maintain-formal-verification-skill` (`skill://maintain-formal-verification-skill`) |
-| Show a PM or designer what the user sees as a chart checked by a model, with each bug drawn as a numbered path, turn an agreed chart into a TLA+ skeleton, or audit the code against its TLA+ spec | `/skill:statechart` (`skill://statechart`) |
+| Show a PM or designer what the user sees as a chart checked by a model, with each bug drawn as a numbered path | `/skill:statechart` (`skill://statechart`) |
 | Vet a performance number before reporting or acting on it | `/skill:benchmark-checklist` (`skill://benchmark-checklist`) |
 | Run a large or cross-cutting change, or one to review after stepping away | `/skill:figure-it-out` (`skill://figure-it-out`) |
 | Keep a decision log during a run, and review it afterward | `/skill:show-me-your-work` (`skill://show-me-your-work`) |

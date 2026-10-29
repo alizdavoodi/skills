@@ -112,8 +112,7 @@ the physical directory under any install root.
 ## Provenance
 
 - The catalog is adapted from Lauren Tan's [`pstack`](https://github.com/cursor/plugins/tree/main/pstack),
-  version 0.15.36 (`cursor/plugins` at `1ba91fc`). `statechart` stays at the 0.15.32 files until its
-  TypeScript rewrite is ported; every other skill is at `1ba91fc`.
+  version 0.15.36 (`cursor/plugins` at `1ba91fc`).
 - `orchestrate-omp` began as Eric Provencher's
   [`orchestrate`](https://github.com/provencher/codex-skills/tree/main/orchestrate) and is now OMP-native.
 - `pstack-omp`, `fable-deslop`, and the OMP integration, including `setup-pstack`'s model helper, are
@@ -144,14 +143,19 @@ exits 1 for a human to resolve.
 ./scripts/sync-upstream.mjs --pin 1ba91fc --target <release-sha> --upstream ../cursor-plugins --dry-run
 ./scripts/sync-upstream.mjs --pin 1ba91fc --target <release-sha> --upstream ../cursor-plugins
 
-# Hold one skill at its current release, whole.
-./scripts/sync-upstream.mjs --pin 1ba91fc --target <release-sha> --exclude statechart
+# Hold skills at their current release, whole.
+./scripts/sync-upstream.mjs --pin 1ba91fc --target <release-sha> --exclude statechart,arena
+
+# Catch one skill up on its own, with the pin that matches its version.
+./scripts/sync-upstream.mjs --pin <that-skill's-base> --target <release-sha> --only statechart
 ```
 
-`--exclude` takes one or more skill names, comma-separated or repeated, and skips every file under them:
-new files, edits, and upstream deletions. Use it when a skill needs a port of its own before it can move,
-such as a script rewrite that would otherwise leave `SKILL.md` and its scripts describing different tools.
-A skill listed in `PORT_ONLY` needs no flag; the script never syncs those.
+`--exclude` and `--only` take one or more skill names, comma-separated or repeated, and act on a whole
+skill: `SKILL.md`, scripts, new files, and upstream deletions. A skill whose `SKILL.md` describes a script
+tree it does not have is worse than one a release behind, so neither flag does a partial sync. `--only`
+exists for the skill an earlier run held back, because its pin is the base that skill was last synced from
+and not the catalog's current pin. The two flags are mutually exclusive. A skill listed in `PORT_ONLY` needs
+neither; the script never syncs those.
 
 Three things the script cannot do, which stay manual:
 

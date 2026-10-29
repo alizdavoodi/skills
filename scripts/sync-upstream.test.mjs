@@ -160,6 +160,34 @@ describe("sync-upstream", () => {
 		assert.doesNotMatch(r.stdout, /statechart/);
 	});
 
+	test("--only syncs one skill and leaves the rest alone", () => {
+		const up = upstream({
+			files: {
+				"pstack/skills/how/SKILL.md": "how\n",
+				"pstack/skills/statechart/SKILL.md": "old\n",
+			},
+			targetFiles: {
+				"pstack/skills/how/SKILL.md": "how v2\n",
+				"pstack/skills/statechart/SKILL.md": "new\n",
+				"pstack/skills/statechart/scripts/run.ts": "run\n",
+			},
+		});
+		const p = port({ "skills/how/SKILL.md": "how\n", "skills/statechart/SKILL.md": "old\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--only", "statechart"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(read(p, "skills/statechart/SKILL.md"), "new\n", "the named skill moves");
+		assert.ok(has(p, "skills/statechart/scripts/run.ts"));
+		assert.equal(read(p, "skills/how/SKILL.md"), "how\n", "every other skill is held back");
+	});
+
+	test("--only and --exclude together are refused", () => {
+		const up = upstream({ files: { "pstack/skills/how/SKILL.md": "a\n" } });
+		const p = port({ "skills/how/SKILL.md": "a\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--only", "how", "--exclude", "how"]);
+		assert.notEqual(r.status, 0);
+		assert.match(r.stderr, /mutually exclusive/);
+	});
+
 	test("a dry run writes nothing", () => {
 		const up = upstream({
 			files: { "pstack/skills/how/SKILL.md": "a\n" },

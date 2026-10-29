@@ -50,7 +50,7 @@ function git(args, options = {}) {
 }
 
 function parseArgs(argv) {
-	const args = { pin: null, target: null, upstream: null, dryRun: false, report: false, exclude: [] };
+	const args = { pin: null, target: null, upstream: null, dryRun: false, report: false, exclude: [], only: [] };
 	for (let i = 0; i < argv.length; i++) {
 		const a = argv[i];
 		if (a === "--pin") args.pin = argv[++i];
@@ -59,17 +59,23 @@ function parseArgs(argv) {
 		else if (a === "--dry-run") args.dryRun = true;
 		else if (a === "--report") args.report = true;
 		else if (a === "--exclude") args.exclude.push(...String(argv[++i]).split(",").map((s) => s.trim()).filter(Boolean));
+		else if (a === "--only") args.only.push(...String(argv[++i]).split(",").map((s) => s.trim()).filter(Boolean));
 		else if (a === "--help" || a === "-h") args.help = true;
 		else throw new Error(`unknown argument ${a}`);
 	}
 	return args;
 }
 
-// An excluded skill is held back whole: a half-adopted skill whose SKILL.md and
+// A skill is synced or held back whole: a half-adopted skill whose SKILL.md and
 // scripts disagree is worse than one that stays a release behind. Names match
 // the skill directory, so `--exclude statechart` holds back every file under it.
-function excluded(name, excludes) {
-	return name !== null && excludes.has(name);
+// `--only` is the inverse, for one skill left behind by an earlier sync while the
+// rest of the catalog moved: the pin then names that skill's own base, not the
+// catalog's.
+function excluded(name, { exclude, only }) {
+	if (name === null) return false;
+	if (only.size) return !only.has(name);
+	return exclude.has(name);
 }
 
 // A commit the clone already has. A commit without the mirrored tree would list
@@ -194,11 +200,13 @@ function newHostTokens(merged, ours) {
 function main(argv) {
 	const args = parseArgs(argv);
 	if (args.help) {
-		console.log("usage: sync-upstream.mjs --pin <sha> --target <sha> [--upstream <dir>] [--exclude <skill,...>] [--dry-run] [--report]");
+		console.log("usage: sync-upstream.mjs --pin <sha> --target <sha> [--upstream <dir>] [--exclude <skill,...> | --only <skill,...>] [--dry-run] [--report]");
 		return;
 	}
 	if (!args.pin || !args.target) throw new Error("--pin and --target are required");
 	const excludes = new Set(args.exclude);
+	const filters = { exclude: excludes, only: new Set(args.only) };
+	if (args.exclude.length && args.only.length) throw new Error("--exclude and --only are mutually exclusive");
 
 	const { dir, temporary } = ensureCheckout(args.upstream);
 	try {
@@ -221,7 +229,7 @@ function main(argv) {
 				for (const line of additions) {
 					const name = skillName(line.split("\t")[1]);
 					if (!name) continue;
-					console.log(`  ${name}${excludes.has(name) ? " (excluded)" : ""}`);
+					console.log(`  ${name}${excluded(name, filters) ? " (held back)" : ""}`);
 				}
 			}
 			return;
@@ -259,7 +267,7 @@ function main(argv) {
 		for (const path of [...targetFiles.keys()].sort()) {
 			const name = skillName(path);
 			if (name && PORT_ONLY.has(name)) continue;
-			if (excluded(name, excludes)) continue;
+			if (excluded(name, filters)) continue;
 
 			const theirs = targetFiles.get(path);
 			const base = pinFiles.get(path);
@@ -325,7 +333,7 @@ function main(argv) {
 			if (targetFiles.has(path)) continue;
 			const name = skillName(path);
 			if (name && PORT_ONLY.has(name)) continue;
-			if (excluded(name, excludes)) continue;
+			if (excluded(name, filters)) continue;
 			if (existsSync(portPath(path))) removed.push(path);
 		}
 
