@@ -33,6 +33,7 @@ const ROLES = {
 	plan: { tier: "strong", use: "multi-phase plans, architect runners" },
 	advisor: { tier: "strong", use: "judgment and prose: how explainer, why synthesizer, reflect judgment, reviewers" },
 	second_opinion: { tier: "strong", use: "arena cross-judge pool, the second opinion in a panel" },
+	deslop: { tier: "strong", use: "fable-deslop lanes: deletion-first review of the OCR-scoped patch" },
 	task: { tier: "mid", use: "implementers: feature, bug-fix, refactoring, perf-issue, hillclimb, swarm workers" },
 	designer: { tier: "mid", use: "UI and visual work" },
 	vision: { tier: "mid", use: "reading screenshots and design comps", images: true },
@@ -59,11 +60,19 @@ const AGENTS = {
 	"poteto-agent": "@task",
 	"comment-sicko": "@advisor",
 	seance: "@advisor",
+	"deslop-auditor": "@advisor",
+	"deslop-reviewer": "@deslop",
 };
 
 // Roles that must not share a model family with another role when the catalog
-// allows it. `second_opinion` is the second opinion for `advisor`.
-const DIVERSE_FROM = { second_opinion: "advisor" };
+// allows it. `second_opinion` is the second opinion for `advisor`, and `deslop`
+// is the non-advisor lane fable-deslop runs beside `reviewer`.
+const DIVERSE_FROM = { second_opinion: "advisor", deslop: "advisor" };
+
+// Role names this script wrote in an earlier version, mapped to the name that
+// replaced them. Config would otherwise carry the old key forever as a "not a
+// pstack role" entry, and a spawn would still resolve the dead name.
+const RENAMED_ROLES = { "review-deslop": "deslop" };
 
 // omp's `judge` role is a model-kind role. A judgment runner answers `find`, image
 // questions, and `tui.autoGraph: smart`. A tiny or chat model answers prompted
@@ -212,10 +221,21 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 		}
 	}
 
-	// Roles outside ROLES are not pstack's; they ride along untouched.
-	const roles = { ...currentRoles };
 	const picked = {};
 	const notes = [];
+
+	// A renamed role carries its value to the current name and drops the old
+	// key. A value already set at the new name stays, and an explicit --role
+	// still wins, since the loops below read the overrides first.
+	for (const [oldRole, newRole] of Object.entries(RENAMED_ROLES)) {
+		if (!Object.hasOwn(currentRoles, oldRole)) continue;
+		if (currentRoles[newRole] == null) currentRoles[newRole] = currentRoles[oldRole];
+		delete currentRoles[oldRole];
+		notes.push(`${oldRole}: renamed to ${newRole}`);
+	}
+
+	// Roles outside ROLES are not pstack's; they ride along untouched.
+	const roles = { ...currentRoles };
 
 	// A passthrough role changes only when the caller names it. An explicit
 	// selector keeps its own effort. Without one it takes the strong budget's
@@ -275,11 +295,23 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	// An agent the user already mapped keeps that mapping, the same way a role
 	// keeps its model. The defaults only fill agents that were never set.
 	const agents = { ...AGENTS, ...currentAgents, ...agentOverrides };
+	const migrated = new Set();
+
+	// An alias naming a renamed role is dead config whatever wrote it: the old
+	// role no longer exists, so the spawn would fail on an unknown role. Retarget
+	// it rather than reporting a mapping that cannot resolve.
+	for (const [agent, value] of Object.entries(agents)) {
+		if (typeof value !== "string" || !value.startsWith("@")) continue;
+		const target = RENAMED_ROLES[value.slice(1)];
+		if (!target) continue;
+		agents[agent] = `@${target}`;
+		migrated.add(agent);
+		notes.push(`${agent}: migrated ${value} to @${target}, the role was renamed`);
+	}
 
 	// `security-reviewer: @judge` was the default this script wrote before
 	// `second_opinion` existed. It is a pstack default, not a user choice, so a
 	// rerun rewrites it instead of refusing to write anything.
-	const migrated = new Set();
 	if (agents["security-reviewer"] === "@judge" && !agentOverrides["security-reviewer"]) {
 		agents["security-reviewer"] = AGENTS["security-reviewer"];
 		migrated.add("security-reviewer");
@@ -325,12 +357,18 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	// collapse has two causes, a shared role or two roles on one model, so the
 	// note names the current mappings and the lever for each.
 	const resolvedFor = (v) => (v.startsWith("@") ? roles[v.slice(1)] : v);
-	const seats = ["reviewer", "security-reviewer"];
-	const panel = seats.map((a) => split(resolvedFor(agents[a])).base);
-	if (panel[0] === panel[1]) {
-		const via = seats.map((a) => `${a}=${agents[a]}`).join(", ");
+	const panels = [
+		["reviewer", "security-reviewer"],
+		["deslop-auditor", "deslop-reviewer"],
+		["reviewer", "deslop-reviewer"],
+	];
+	for (const [left, right] of panels) {
+		if (!agents[right]) continue;
+		const pair = [left, right].map((a) => split(resolvedFor(agents[a])).base);
+		if (pair[0] !== pair[1]) continue;
+		const via = [left, right].map((a) => `${a}=${agents[a]}`).join(", ");
 		notes.push(
-			`panel agents reviewer and security-reviewer both resolve to ${panel[0]} (${via}); split them with --agent security-reviewer=@second_opinion, or give their roles different models with --role <role>=<provider>/<model>`,
+			`panel agents ${left} and ${right} both resolve to ${pair[0]} (${via}); split them with --agent ${right}=<@role|selector>, or give their roles different models with --role <role>=<provider>/<model>`,
 		);
 	}
 

@@ -75,7 +75,7 @@ The default answer is `/skill:poteto-mode`, which runs most of the others when i
 | Get several attempts at one brief, merged into the best one | `/skill:arena` (`skill://arena`) |
 | Run parallel checks over slices, or race workers, as parallel subagents | `/skill:swarm` (`skill://swarm`) |
 | Have different models review a diff and try to break it | `/skill:interrogate` (`skill://interrogate`) |
-| Shrink an oversized patch to its smallest root-cause edit, reviewed by every configured Oracle lane | `/skill:fable-deslop` (`skill://fable-deslop`) |
+| Shrink an oversized patch to its smallest root-cause edit, scoped by `ocr` and reviewed by two independent lanes | `/skill:fable-deslop` (`skill://fable-deslop`) |
 | Fix a bug test-first when a cheap local test exists | `/skill:tdd` (`skill://tdd`) |
 | Apply TypeScript rules to `.ts` or `.tsx` work | `/skill:typescript-best-practices` (`skill://typescript-best-practices`) |
 | Strip comments before review, using a reviewer that didn't write them | `/skill:no-comments` (`skill://no-comments`) |
@@ -113,7 +113,7 @@ Close calls:
 
 Not in pstack:
 
-- Upstream's `/deslop`, `control-cli`, and `control-ui` come from the `cursor-team-kit` plugin. Here, `/skill:fable-deslop` covers a code diff when `rpce-cli` is configured, `/skill:unslop` covers prose, `bash` with `pty` and named services drives a CLI or TUI, and the `eval` tool's `browser` object drives a web UI. For native macOS apps, use `cua-driver` or `peekaboo` when installed.
+- Upstream's `/deslop`, `control-cli`, and `control-ui` come from the `cursor-team-kit` plugin. Here, `/skill:fable-deslop` covers a code diff when `ocr` is installed, `/skill:unslop` covers prose, `bash` with `pty` and named services drives a CLI or TUI, and the `eval` tool's `browser` object drives a web UI. For native macOS apps, use `cua-driver` or `peekaboo` when installed.
 - `/loop` is an OMP command. Give it `--while` or `--until` with a check that can pass or fail.
 - Upstream's `/create-skill` is a Cursor built-in. The authoring-a-skill playbook (`skill://poteto-mode/playbooks/authoring-a-skill.md`) and `omp://skills.md` replace it.
 - pstack has no `/orchestrate` skill. Orchestrate is a `/skill:poteto-mode` playbook.

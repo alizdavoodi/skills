@@ -300,3 +300,46 @@ describe("review findings", () => {
 		assert.equal(r.written("modelRoles").judge, "typesafe/jev-1.14.0");
 	});
 });
+
+describe("deslop lanes", () => {
+	test("each deslop lane defaults to its role", () => {
+		const r = run(["--budget", "large"]);
+		assert.equal(r.status, 0, r.stderr);
+		const agents = r.written("task.agentModelOverrides");
+		assert.equal(agents["deslop-auditor"], "@advisor");
+		assert.equal(agents["deslop-reviewer"], "@deslop");
+		assert.ok(r.written("modelRoles").deslop, "the role the alias reads is filled");
+	});
+
+	test("a fresh resolve puts deslop off advisor's family", () => {
+		const r = run(["--budget", "large"]);
+		assert.equal(r.status, 0, r.stderr);
+		const roles = r.written("modelRoles");
+		assert.notEqual(base(roles.deslop), base(roles.advisor));
+	});
+
+	test("both deslop lanes collapsing onto one model is reported", () => {
+		const r = run(["--budget", "large"], {
+			config: { "task.agentModelOverrides": { "deslop-reviewer": "@advisor" } },
+		});
+		assert.equal(r.status, 0, r.stderr);
+		assert.ok(/deslop-auditor and deslop-reviewer both resolve to/.test(r.stdout), r.stdout);
+	});
+
+	test("an explicit deslop selector with an effort wins over the budget", () => {
+		const r = run(["--budget", "medium", "--role", "deslop=beta/gemini-3-pro:high"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("modelRoles").deslop, "beta/gemini-3-pro:high");
+	});
+
+	test("the old review-deslop key is renamed, not left beside the new one", () => {
+		const r = run(["--budget", "large"], {
+			config: { modelRoles: { "review-deslop": "beta/gemini-3-pro:high" } },
+		});
+		assert.equal(r.status, 0, r.stderr);
+		const roles = r.written("modelRoles");
+		assert.equal(roles["review-deslop"], undefined, "the stale key is dropped");
+		assert.equal(base(roles.deslop), "beta/gemini-3-pro", "the model moves to the new name");
+		assert.ok(/review-deslop: renamed to deslop/.test(r.stdout), r.stdout);
+	});
+});

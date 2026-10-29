@@ -8,8 +8,8 @@ description: Configure which models pstack uses per role and at what reasoning b
 Upstream pstack picks a model per call. OMP does not work that way: a `task` item carries no model, so the
 model follows the **role** and the **agent**. Two settings decide everything.
 
-- `modelRoles` maps each role (`slow`, `plan`, `advisor`, `second_opinion`, `task`, `designer`, `vision`, `smol`,
-  `tiny`, `commit`) to a `provider/model[:effort]` selector.
+- `modelRoles` maps each role (`slow`, `plan`, `advisor`, `second_opinion`, `deslop`, `task`, `designer`,
+  `vision`, `smol`, `tiny`, `commit`) to a `provider/model[:effort]` selector.
 - `task.agentModelOverrides` maps each spawnable agent to a selector or an `@role` alias.
 
 `judge` belongs to omp, not to pstack, and the script leaves it alone. It is a model-kind role. It answers
@@ -55,7 +55,7 @@ The budget sets the effort token per tier, not per model:
 
 | tier | roles | unlimited | large | medium | small |
 |---|---|---|---|---|---|
-| strong | `slow`, `plan`, `advisor`, `second_opinion` | max | xhigh | high | medium |
+| strong | `slow`, `plan`, `advisor`, `second_opinion`, `deslop` | max | xhigh | high | medium |
 | mid | `task`, `designer`, `vision` | xhigh | high | medium | low |
 | small | `smol` | high | high | medium | low |
 | pinned | `tiny`, `commit` | low | low | low | low |
@@ -74,12 +74,15 @@ reach the budget's effort gets the highest level it supports, and the run says s
 same way: an agent the user already pointed at a role or a model keeps that mapping, and the pstack default
 only fills an agent that was never set.
 
-Read the `notes:` block out loud to the user. It reports four things that matter:
+Read the `notes:` block out loud to the user. It reports what matters:
 
 - a configured model that is no longer in the catalog, which the run replaced
 - a role whose model tops out below the budget
+- a role this script wrote under an older name, which the run moved to the current one
 - `reviewer` and `security-reviewer` resolving to the same model, which means panel skills
   (`skill://interrogate`, `skill://arena`, `skill://reflect`) have no real second opinion
+- `deslop-auditor` and `deslop-reviewer` resolving to the same model, which means `skill://fable-deslop` runs one
+  review twice instead of two lanes
 - an agent kept on the user's mapping where pstack would have defaulted elsewhere
 
 ### 4. Let the user change roles
@@ -106,6 +109,21 @@ the first has already landed, and re-running finishes the job.
 Tell the user where it was written (the script prints the path) and that it is the **active profile's**
 config: `omp --profile <name>` has its own. New sessions and new subagent spawns resolve the new roles.
 
+Both deslop agents are written into `task.agentModelOverrides` even when their files are missing, and `omp
+config set` cannot tell the difference. Check for them and offer the copy:
+
+```bash
+for a in deslop-auditor deslop-reviewer; do
+  ls ~/.omp/agent/agents/$a.md >/dev/null 2>&1 || echo "missing: $a"
+done
+```
+
+A missing file is why `skill://fable-deslop` would run one lane: `task` fails preflight with an unknown agent.
+Install both from the repository that holds this skill
+(`cp agents/deslop-*.md ~/.omp/agent/agents/`) and start a new session, since a live session keeps its
+discovered agent inventory. Do not substitute OMP's bundled `reviewer` for the missing lane: its contract
+reports only unintentional defects, so it cannot answer a deletion-first request.
+
 ### 6. Check the panel
 
 If step 3 warned that `reviewer` and `security-reviewer` collapse onto one model, say plainly what is lost:
@@ -114,6 +132,11 @@ cross-model review degenerates into self-review, and the independence that `skil
 family from `advisor` when the catalog has one. If the warning remains, either only one family passes
 `enabledModels`, so admit a second and re-run, or `second_opinion` was set earlier to the same model, so name another
 with `--role second_opinion=<provider>/<model>`. Do not fake diversity by giving the same model two role names.
+
+The same reading applies to `deslop-auditor` and `deslop-reviewer`: both lanes of `skill://fable-deslop` then answer
+from one model, so the report says "one review" instead of claiming agreement between lanes. `deslop`
+already avoids `advisor`'s family on a fresh run; the lever is
+`--role deslop=<provider>/<model>` or `--agent deslop-reviewer=<selector>`.
 
 ### 7. Offer a verification skill (optional)
 
@@ -133,8 +156,9 @@ can generate one with `/skill:create-formal-verification-skill`." On no, move on
 
 | pstack role | OMP carrier |
 |---|---|
-| judgment and prose, how explainer, why synthesizer, reflect judgment and divergent and synthesizer, historical session consults | `advisor`, through the `reviewer`, `comment-sicko`, and `seance` agents |
+| judgment and prose, how explainer, why synthesizer, reflect judgment and divergent and synthesizer, historical session consults | `advisor`, through the `reviewer`, `comment-sicko`, `seance`, and `deslop-auditor` agents |
 | arena cross-judge pool, the second opinion | `second_opinion`, through the `security-reviewer` agent |
+| fable-deslop's second lane | `deslop`, through the `deslop-reviewer` agent; the first lane is `advisor` through `deslop-auditor` |
 | feature, bug-fix, refactoring, perf-issue, hillclimb, swarm workers, arena runners, UI work | `task`, through the `task` and `poteto-agent` agents |
 | how explorer, why investigators, reflect tooling | `smol`, through the `scout` and `librarian` agents |
 | mechanical arms | `tiny`, through the `sonic` agent |

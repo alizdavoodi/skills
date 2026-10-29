@@ -44,6 +44,8 @@ seance
 
 A canonically routed task item's `agent` value must be one of those bundled names. Canonical role labels and model aliases are not agent names. `task` is the default worker, so omit `agent` for it.
 
+`deslop-auditor` and `deslop-reviewer` sit outside this roster. `skill://fable-deslop` dispatches both directly as its two review lanes, and no canonical pstack role maps to either. They exist only once `agents/deslop-auditor.md` and `agents/deslop-reviewer.md` are installed into `~/.omp/agent/agents/`. OMP's bundled `reviewer` is not a substitute for the `advisor` lane: its contract reports only unintentional defects and skips non-blocking changes, so it cannot answer a deletion-first request.
+
 `poteto-agent` runs `implementer` and `owner` work in poteto's style. `comment-sicko` audits comments for imported skills that name it directly.
 
 ### Planning and design

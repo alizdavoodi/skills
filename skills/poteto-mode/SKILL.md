@@ -23,7 +23,7 @@ Remaining triggers:
 - Nontrivial multi-step → write the throughput checkpoint (Feature step 3).
 - Any prose surface, your reply to the user included → the **unslop** skill (`skill://unslop`). Write the reply per **Writing the reply**. Agent-facing prose also follows the authoring playbook (`skill://poteto-mode/playbooks/authoring-a-skill.md`) and `omp://skills.md`.
 - Docs, RFCs, readmes, PR descriptions, or commit messages → the **technical-writing** skill (`skill://technical-writing`).
-- Before commit → on a code diff, run the **fable-deslop** skill (`skill://fable-deslop`) when `rpce-cli` is configured, and otherwise skip it with a one-line note. Run the **unslop** skill over prose surfaces only (replies, PR titles and descriptions).
+- Before commit → on a code diff, run the **fable-deslop** skill (`skill://fable-deslop`) when `ocr` is installed, and otherwise skip it with a one-line note. Run the **unslop** skill over prose surfaces only (replies, PR titles and descriptions).
 - Before review → the **no-comments** skill (`skill://no-comments`).
 - Shipping UI / IDE / CLI → the matching control capability. Drive a CLI or TUI through `bash` (named services, `pty`, `proc://`). Drive a browser, Electron, or web UI through the `eval` tool's `browser` object. Drive native macOS UI through `cua-driver` or `peekaboo` when installed. For bug fixes, reproduce first on the same surface yourself. Hand to the user only under the narrow Bug fix step 1 exception.
 - Running a benchmark, measuring perf yourself, or reporting a speedup or regression you measured → the **benchmark-checklist** skill (`skill://benchmark-checklist`) before you report or act on the number.

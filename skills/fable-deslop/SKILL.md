@@ -1,12 +1,14 @@
 ---
 name: fable-deslop
-description: "Deletion-first patch minimization. Build grounded review context with the RepoPrompt CE context builder, review it with two independent Oracle lanes, then adjudicate every finding against repository and upstream evidence. Use for /skill:fable-deslop, shrinking an oversized PR, or a deletion-first review before implementation."
+description: "Deletion-first patch minimization. Scope the patch with the open-code-review delegate, freeze one bundle, review it with two independent task lanes, then adjudicate every finding against repository and upstream evidence. Use for /skill:fable-deslop, shrinking an oversized PR, or a deletion-first review before implementation."
 disable-model-invocation: true
 ---
 
 # Fable deslop
 
-Turn a large patch into the smallest coherent root-cause change. One `oracle_send` runs every configured Oracle lane on the same published context, so the two reviews are independent by construction. You adjudicate; the lanes advise.
+Turn a large patch into the smallest coherent root-cause change. The `ocr` delegate decides what is in scope
+and which rules apply; two `task` items review the same frozen bundle independently. You adjudicate; the lanes
+advise.
 
 ## Brown-field rule
 
@@ -16,13 +18,21 @@ Source: [Coding Models Are Doing Too Much](https://nrehiew.github.io/blog/minima
 
 ## Transport
 
-Every `rpce-cli` invocation is its own connection and starts unbound, so chain the bind into each one:
+OCR is deterministic and LLM-free in this mode: it selects files and resolves rules. The review itself runs on
+the two lanes, so no Oracle endpoint, RepoPrompt window, or `rpce-cli` is involved.
 
 ```bash
-rpce-cli -e 'bind_context op=bind working_dirs="<repo>" create_if_missing=true && <command>'
+ocr --version                                   # 1.9.0 or newer for --format json
+ocr delegate preview --format json [--from <ref> --to <ref> | -c <hash>] [--exclude <patterns>]
+ocr delegate rule --format json <path>...
 ```
 
-An unbound call fails with "Multiple RepoPrompt windows detected" whenever more than one window is open. Use the JSON form `call <tool> {"op":"…"}` for any argument holding arrays, quotes, or newlines; the `key=value` shorthand silently drops array arguments in chained commands.
+`ocr delegate` reads the Git repository at the current directory; pass `--repo <path>` to override. Every
+`git` call during the review uses `--no-pager --no-ext-diff --no-textconv --no-color`.
+
+If `ocr` is missing, stop and report it with the install command
+(`npm install -g @alibaba-group/open-code-review`). Do not substitute an ad-hoc file guess; the scope is what
+makes the two lanes comparable.
 
 ## Process
 
@@ -45,51 +55,107 @@ Trace the changed execution path, owners, callers, existing helpers, tests, and 
 
 Separate confirmed behavior, plausible mechanism, unproven compatibility, and unknowns. Every compatibility or security claim used to keep code needs a repository, upstream-source, documentation, or live-test basis.
 
-### 3. Write the patch bundle
-
-Write one file the lanes can read the diff from, because a diff is not in the file tree:
+### 3. Scope with the delegate
 
 ```bash
-git diff <base>...<head> > <repo>/tmp/fable-deslop-patch.diff
+ocr delegate preview --format json --from <base> --to <head> -b "<requirement or issue summary>"
 ```
 
-Add the originating issue or PR body, pre-change versions of changed files when the patch lacks ownership context, and live probe results as further files under `<repo>/tmp/`. Keep each changed line once. Exclude credentials, tokens, private user data, generated output, and unrelated files.
+Pass `--background` only with requirement context the diff cannot show, and keep it under the CLI's limits
+rather than truncating the source. Read `mode`, `merge_base`, `reviewable_files`, and `excluded_files`. Report
+every previewed file; a file that leaves the review is named with its exclusion reason, never silently dropped.
 
-Sending the selection to an Oracle forwards it to that lane's provider. Explicit invocation of this skill authorizes that transmission. Otherwise ask first.
-
-### 4. Publish the context
-
-`context_builder` is what publishes a selection to the tab. A `manage_selection` call against a tab with no published selection mutates a cache the Oracle never sees: the lanes then answer confidently about nothing. Build first, name the bundle in the instructions:
+Then resolve the checklist once for all reviewable paths, in batches when the list is long:
 
 ```bash
-rpce-cli -e 'bind_context op=bind working_dirs="<repo>" && context_builder instructions="Reviewing <patch scope>. Select tmp/fable-deslop-patch.diff, every file it changes, their callers and tests."'
+ocr delegate rule --format json <path>...
 ```
 
-Then add anything it missed and confirm what is published:
+Rules are grouped by content, so one call covers every file that shares a rule.
+
+### 4. Freeze the bundle
+
+One directory, one generation, one hash. Everything the lanes read lives here:
 
 ```bash
-rpce-cli -e 'bind_context op=bind working_dirs="<repo>" && call manage_selection {"op":"add","paths":["tmp/fable-deslop-patch.diff"],"strict":true,"view":"files"}'
+BUNDLE=<repo>/tmp/fable-deslop/$(date +%Y%m%d-%H%M%S)
+mkdir -p "$BUNDLE"
+ocr delegate preview --format json <mode flags> -b "<requirement>" > "$BUNDLE/preview.json"
+jq -r '.reviewable_files[].path' "$BUNDLE/preview.json" > "$BUNDLE/paths.txt"
+jq -r '.reviewable_files[].path' "$BUNDLE/preview.json" | tr '\n' '\0' | xargs -0 ocr delegate rule --format json > "$BUNDLE/rules.json"
 ```
 
-The selection must list the bundle and every file needed to judge a changed line before you send. An empty selection, or one missing the patch, means the publish did not land: re-run `context_builder` naming the missing paths. Freeze the selection here; both lanes must review the same bytes.
+`ocr delegate rule` takes paths as arguments, and the preview is the only source for them; never retype a path
+by hand. `xargs -0` passes them one argument each, so spaces and quotes survive.
 
-`git diff --artifacts` publishes a snapshot and normally auto-selects it, but it can report "the exact Git-data root could not be loaded" and select nothing. The written patch file is the reliable path; treat artifacts as a bonus and verify.
+Build one patch file with a command that matches the preview's `mode`, writing to `$BUNDLE/patch.diff`.
+`jq -r … | tr '\n' '\0' | xargs -0` keeps paths with spaces intact; `--pathspec-from-file` is not in every
+git build.
 
-### 5. Review with every lane
+- **range** — `jq -r '.reviewable_files[].path' "$BUNDLE/preview.json" | tr '\n' '\0' | xargs -0 git --no-pager diff --no-ext-diff --no-textconv --no-color <merge_base>..<to> --`
+- **commit** — `jq -r '.reviewable_files[].path' "$BUNDLE/preview.json" | tr '\n' '\0' | xargs -0 git --no-pager show --diff-merges=first-parent --no-ext-diff --no-textconv --no-color <commit> --`
+- **workspace** — `jq -r '.reviewable_files[].path' "$BUNDLE/preview.json" | tr '\n' '\0' | xargs -0 git --no-pager diff --no-ext-diff --no-textconv --no-color HEAD --`
 
-Send the shared prompt from `skill://fable-deslop/references/review-prompt.md` once:
+`--diff-merges=first-parent` is not optional. OCR builds its preview the same way; plain `git show` on a
+merge commit prints a combined diff that omits every change the merge brought in, so the lanes would review
+an empty patch against a preview that lists those files. The flag is a no-op on an ordinary commit.
+
+A new untracked file has no diff against `HEAD`; append each one, because the whole file is new code:
 
 ```bash
-rpce-cli -e 'bind_context op=bind working_dirs="<repo>" && call oracle_send {"message":"<shared review prompt>","new_chat":true,"mode":"review","export_response":true}'
+git --no-pager diff --no-index --no-color --src-prefix=a/ --dst-prefix=b/ -- /dev/null "<path>" >> "$BUNDLE/patch.diff"
 ```
 
-One send fans out to the primary lane plus every additional configured Oracle, each answering independently on the identical selection. Do not feed one lane's review to another; a follow-up through any lane's chat ID re-runs all of them.
+`git diff --no-index` exits 1 when the files differ. That is success here; only a higher code is a failure.
 
-- `oracle_utils op=models` lists the lane the current chat model serves. `app_settings op=get key=models.additional_oracle_models` tells you whether a second lane exists at all. One lane means one review: say so in the report rather than presenting a single opinion as agreement.
-- `model` overrides the primary lane only, only with `new_chat: true`, and only with a RepoPrompt model-preset ID. Preset IDs are provider-qualified and differ per installation, so read them from the installation's configured models instead of assuming one. A bare model name or an agent ID from `agent_manage op=list_agents` is rejected with "Model preset … was not found", and a provider without credentials fails the whole send with "Oracle lane N uses unavailable model". Override only when the user names a reviewer; the configured lanes are the default.
-- `export_response: true` writes every lane to one file under `<repo>/prompt-exports/oracle-review-<timestamp>-<id>.md`. Read it through the `End of Oracle group` marker; a missing marker or lane means a truncated review, not a clean one.
+Write `$BUNDLE/meta.md` with the pinned facts, the invariant, the authority gathered, the disproved shortcuts,
+and any named suggestions labeled as hypotheses. Then hash the generation:
 
-A provider, context, or empty-response failure is not a review. Retry once when safe, then continue with the lanes that completed and report the missing comparison.
+```bash
+shasum -a 256 "$BUNDLE"/{patch.diff,preview.json,rules.json,meta.md}   # sha256sum on Linux
+```
+
+Compare `patch.diff` against the preview counts before sending. An empty patch with a non-empty
+`reviewable_count` means the wrong mode or refs, not a clean change. Freeze here: no commit, rebase, or file
+edit under review until both lanes answer.
+
+Sending this bundle to a lane forwards it to that lane's provider. Explicit invocation of this skill authorizes
+that transmission. Otherwise ask first.
+
+### 5. Review with both lanes
+
+Send the shared request from `skill://fable-deslop/references/review-prompt.md` once, as one `task` batch: two
+items, the same filled prompt, different `agent`. The item `agent` is what selects the model; a task item has no
+model field.
+
+```json
+{
+  "context": "Frozen fable-deslop bundle: <repo>, <scope>, bundle at <path>, sha256 <hash>. Read-only review; no edits, no child agents.",
+  "tasks": [
+    { "name": "DeslopLaneAuditor", "agent": "deslop-auditor", "task": "<shared prompt + header>", "solutionSpace": "deletion-first review; findings open, no known defect" },
+    { "name": "DeslopLaneIndependent", "agent": "deslop-reviewer", "task": "<identical shared prompt + header>", "solutionSpace": "deletion-first review; findings open, no known defect" }
+  ]
+}
+```
+
+- `deslop-auditor` runs the `advisor` role; `deslop-reviewer` runs the `deslop` role. `skill://setup-pstack`
+  writes both, and keeps `deslop` on a different model family from `advisor` when the catalog has one.
+- Both items name a deslop agent on purpose. OMP's bundled `reviewer` reports only unintentional defects and
+  skips non-blocking changes, which is the opposite of a deletion-first review; routing the advisor-model lane
+  through it would make the lane ignore correct-but-unnecessary code. Its model would change; its contract
+  would not.
+- If either deslop agent is absent from the live `task` inventory, it was never installed. Install both from
+  `<repo>/agents/` and re-dispatch. Running the missing lane as `reviewer` is not a substitute; say the panel
+  collapsed to one lane instead of presenting a weaker review as agreement.
+- Confirm independence from the returned `resolvedModel` on each result, not from the role names. If both lanes
+  report the same model, say "one review" in the report; do not present a single opinion as agreement.
+- `task.enableEffort` is off by default, so effort comes from the role selector. Put `effort` in an item only
+  when the live schema exposes it; never hand-tune a model per call.
+- Do not feed one lane's review to another, and do not re-dispatch one lane after reading the other. A follow-up
+  to a lane answers that lane only.
+- Read each result from `agent://<id>` and the transcript from `history://<id>` when a report is truncated or
+  ambiguous. A failed or empty lane is not a review: retry once when safe, then continue with the lane that
+  completed and report the missing comparison.
 
 ### 6. Adjudicate
 
@@ -104,7 +170,7 @@ Reject a recommendation that would:
 - Introduce a broader abstraction to save local lines
 - Delete regression coverage without another test exercising the same boundary
 
-Look for reductions every lane missed, especially data represented twice, a list joined immediately into one argument, copied error normalization, and tests for invented compatibility.
+Look for reductions every lane missed, especially data represented twice, a list joined immediately into one argument, copied error normalization, and tests for invented compatibility. A rule from `rules.json` that fires on unchanged code is pre-existing: keep it out of the deletion list and say so.
 
 ### 7. Report and clean up
 
@@ -112,14 +178,14 @@ Return:
 
 1. Verdict: `trim then ship`, `keep as-is`, or `redesign`
 2. Evidence, including upstream URLs and live probes
-3. Lane comparison and adjudicated disagreements, naming each lane's model
-4. File-by-file `KEEP` / `DELETE/REVERT` / `SHRINK` assessment
+3. Lane comparison and adjudicated disagreements, naming each lane's resolved model
+4. File-by-file `KEEP` / `DELETE/REVERT` / `SHRINK` assessment, covering every `preview.json` entry
 5. Ranked implementation steps
 6. Tests to keep, remove, or combine
-7. Current and target patch footprint
+7. Current and target patch footprint, including the preview's insertions and deletions
 8. Risks and follow-ups
 9. Exact validation commands
 
-Apply edits only when the user asks for implementation, and give the implementer the adjudicated plan, not raw lane output. Save the plan under the repository's planning convention only when the user asks. Then delete the bundle under `tmp/` and the Oracle exports this run created.
+Apply edits only when the user asks for implementation, and give the implementer the adjudicated plan, not raw lane output. Save the plan under the repository's planning convention only when the user asks. Then delete the bundle under `tmp/fable-deslop/`; it is one generation, and a new head voids it.
 
 Another agent must be able to execute the plan without rediscovering scope, authority, deletions, or verification.

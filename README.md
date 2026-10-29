@@ -18,21 +18,22 @@ relative paths, `agent://` and `history://` instead of cloud-agent URLs.
 | Execution | `tdd`, `correct`, `bro`, `show-me-your-work`, `benchmark-checklist`, `automate-me` |
 | Writing | `unslop`, `technical-writing`, `no-comments` |
 | Verification | `create-verification-skill`, `maintain-verification-skill`, `create-formal-verification-skill`, `maintain-formal-verification-skill` |
-| Review | `fable-deslop` shrinks an oversized patch with the RepoPrompt CE context builder and its Oracle lanes |
+| Review | `fable-deslop` scopes a patch with the `ocr` delegate and reviews it with two independent `task` lanes |
 | Language | `typescript-best-practices` |
 | Bots | `make-bot-ui` |
 | Help | `poteto-help` |
 | Principles | 24 `principle-*` leaves cited by the playbooks |
 
-`agents/` holds two optional subagent definitions, `poteto-agent` and `comment-sicko`, for imported
-workflows that call those names directly.
+`agents/` holds four optional subagent definitions: `poteto-agent` and `comment-sicko`, for imported
+workflows that call those names directly, and `deslop-auditor` and `deslop-reviewer`, the two fable-deslop
+lanes. Install them with the `cp` below; both deslop agents are absent from the task inventory until then.
 
 ## Requirements
 
 - OMP 18.10.4 or newer.
 - Bun, for the `poteto-mode` scripts.
 - `gh`, for the PR playbooks.
-- RepoPrompt CE and its `rpce-cli`, for `fable-deslop`.
+- `ocr` (open-code-review) 1.9.0 or newer, for `fable-deslop`.
 - `trash`, for the worktree-cleanup playbook.
 
 ## Install
