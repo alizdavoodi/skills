@@ -216,6 +216,44 @@ describe("sync-upstream", () => {
 		assert.equal(read(p, "skills/a/SKILL.md"), "a\n", "earlier file untouched");
 	});
 
+	test("flags a clean merge that introduces an untranslated host token", () => {
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": "alpha\nbeta\n" },
+			targetFiles: {
+				"pstack/skills/how/SKILL.md":
+					"alpha\nRead the skill under `.cursor/skills/` before work.\n",
+			},
+		});
+		const p = port({ "skills/how/SKILL.md": "alpha\nbeta\n" });
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--dry-run"]);
+		assert.equal(r.status, 0, r.stderr);
+		// The merge is clean, so no conflict line names the file. Without this
+		// flag the run reports success and the port keeps Cursor text.
+		assert.match(r.stdout, /would add 0, update 1, conflict 0/);
+		assert.match(r.stdout, /host .*skills\/how\/SKILL\.md \(\.cursor\//);
+	});
+
+	test("does not flag a file whose port copy already names a host on purpose", () => {
+		// Enough surrounding lines that the change and the port's insertion do
+		// not fall inside each other's 3-line merge context.
+		const body = ["one", "two", "three", "four", "five", "six", "seven"];
+		const up = upstream({
+			files: { "pstack/skills/how/SKILL.md": `${body.join("\n")}\n` },
+			targetFiles: {
+				"pstack/skills/how/SKILL.md": `${body.map((l) => (l === "six" ? "six updated" : l)).join("\n")}\n`,
+			},
+		});
+		// poteto-help style: the phrase is part of the port's own explanation,
+		// far from the line upstream changed, so the merge is clean.
+		const p = port({
+			"skills/how/SKILL.md": `one\nThis repo ports a Cursor plugin from upstream.\ntwo\nthree\nfour\nfive\nsix\nseven\n`,
+		});
+		const r = run(p, ["--pin", up.pin, "--target", up.target, "--upstream", up.dir, "--dry-run"]);
+		assert.equal(r.status, 0, r.stderr);
+		assert.match(r.stdout, /would add 0, update 1/);
+		assert.doesNotMatch(r.stdout, /host /);
+	});
+
 	test("requires both commits", () => {
 		const p = port({});
 		const r = run(p, ["--pin", "HEAD"]);

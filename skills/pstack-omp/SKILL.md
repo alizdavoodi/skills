@@ -246,6 +246,12 @@ Do not put a `model` field in a task item. Do not use a model alias as the `agen
 
 `/skill:setup-pstack --show` prints the live agent-to-role mapping. These are settings, not task payload fields. When a playbook requires model independence, read the resolved model each child reports; if two panel agents resolve to the same model, say so rather than claiming a second opinion.
 
+## Upstream text and host mechanisms
+
+Upstream pstack is written for Cursor. Where a skill carries upstream wording, its Cursor paths, spawn fields, model slugs, and product surfaces have an OMP replacement. `skill://pstack-omp/references/host-translation.md` records each one and the shape of the substitution.
+
+A sync that reports a clean merge can still deliver untranslated Cursor text, because a three-way merge keeps upstream's new lines verbatim. `scripts/sync-upstream.mjs` prints a `host` line for any file whose merged text introduces a host token the port copy did not already carry. Treat that line as a pointer, not a verdict. Prose that names Cursor or Bugbot while explaining the port is correct, so the flag is narrow and a human still decides.
+
 ## Writing
 
 Apply `unslop` (`skill://unslop`) to every reply, brief, report, review, task dispatch, commit message, and agent-facing edit.

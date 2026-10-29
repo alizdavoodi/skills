@@ -148,7 +148,9 @@ Three things the script cannot do, which stay manual:
 
 - Resolve a `.merge` conflict, because both sides changed the same line.
 - Rewrite host mechanisms inside newly added upstream text. A three-way merge carries new lines verbatim, so
-  a new skill arrives with Cursor paths and agent names intact. Rewrite them before committing.
+  a new skill arrives with Cursor paths and agent names intact. The run prints a `host` line naming each file
+  whose merged text introduces one, and [`skills/pstack-omp/references/host-translation.md`](skills/pstack-omp/references/host-translation.md)
+  records what each Cursor mechanism was replaced with. Rewrite, then commit.
 - Update the pin recorded above and in [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) after a sync.
 
 `scripts/sync-upstream.test.mjs` covers the merge cases with throwaway upstream repositories.
