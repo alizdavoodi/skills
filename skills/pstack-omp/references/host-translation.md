@@ -102,6 +102,26 @@ Forty-one mirrored files carry at least one. The ones with the most, and therefo
 | `skills/arena/SKILL.md`, `skills/swarm/SKILL.md`, `skills/create-verification-skill/SKILL.md`, `skills/architect/SKILL.md`, `skills/how/SKILL.md` | 1 to 3 each |
 | The rest of `skills/poteto-mode/playbooks/`, `skills/reflect/references/`, and `agents/poteto-agent.md` | 1 to 2 each |
 
+## Deliberate divergences
+
+Two places where the port keeps text upstream deleted or reworded. Both conflict on every sync, and both are
+decisions rather than unfinished translation. Re-read this list before resolving either one, because the merge
+cannot tell a deliberate divergence from a stale port.
+
+**`skills/poteto-mode/playbooks/orchestrate.md` keeps the script-driven body.** Upstream deleted it in
+`c742dd6` (0.15.36) because the playbook stopped calling the `orch` CLI: the coordinator now keeps state in
+Cursor's Project tracker and Project store and watches PRs through PR and CI event subscriptions. OMP has no
+Project tracker and no Project store, so the reason does not carry over, and `scripts/orch/` still supplies the
+frontier, the verdict ledger, the completion inbox, and `status`. The port keeps the ported body, takes
+upstream's new Supervision section, and deletes the scripts only together with the playbook body and their
+tests. The cost is accepted: the `orch` suite is the only coverage of `gh` PR-chain resolution, and part of it
+timeouts on its fake forge.
+
+**`skills/poteto-mode/playbooks/autopilot-stack.md` attributes the per-link rebase to the root.** Upstream says
+each PR rebases onto its parent's branch. The port gives one writer per branch, so an owner rebasing its own
+link contradicts it. The port reads upstream's intent as one actor moving the chain and names the root. This is
+an interpretation, not upstream's wording. If upstream meant the owner, this line is wrong and should say so.
+
 ## Auditing a sync
 
 The sync prints a `host` line for any file it would write whose merged text introduces a host token the port file did not already contain. That line is a pointer, not a verdict. It cannot tell a legitimate mention from an untranslated directive, because `poteto-help` and the Bugbot triage deliberately name Cursor and Bugbot while explaining the port.

@@ -4,6 +4,8 @@
 
 Ceremony must scale with the program. On cheap near-identical units, collapse it as each section directs.
 
+Upstream removed this playbook's script-driven body in 0.15.36, because Cursor keeps the program's state in its Project tracker and Project store. OMP has neither, so this port keeps the `orch` scripts and the sections below that use them. `skill://pstack-omp/references/host-translation.md` records the divergence.
+
 Three rules carry the rest.
 
 - Completions are queue events, not interrupts.
