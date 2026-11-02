@@ -75,7 +75,7 @@ Each substitution is one of these. Name the shape when you audit, because the sh
 | Upstream | OMP | Shape |
 |---|---|---|
 | `create-skill` | the authoring-a-skill playbook, plus `omp://skills.md` for the format | Substitute. Appears in `automate-me`, `poteto-mode`, `authoring-a-skill`, `reflect`, and the reflect lenses. |
-| `/deslop` from `cursor-team-kit` | `skill://fable-deslop` when `rpce-cli` is configured, otherwise skip with a one-line note | Substitute |
+| `/deslop` from `cursor-team-kit` | `skill://deslop`, ported verbatim from that plugin | Rename |
 | `control-cli` for CLIs and TUIs | `bash` with named services, `pty`, and `proc://` | Substitute |
 | `control-ui` for browser and Electron | the `eval` tool's `browser` object | Substitute |
 | `AskQuestion` | the `ask` tool | Rename |

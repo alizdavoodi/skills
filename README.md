@@ -18,22 +18,21 @@ relative paths, `agent://` and `history://` instead of cloud-agent URLs.
 | Execution | `tdd`, `correct`, `bro`, `show-me-your-work`, `benchmark-checklist`, `automate-me` |
 | Writing | `unslop`, `technical-writing`, `no-comments` |
 | Verification | `create-verification-skill`, `maintain-verification-skill`, `create-formal-verification-skill`, `maintain-formal-verification-skill` |
-| Review | `fable-deslop` scopes a patch with the `ocr` delegate and reviews it with two independent `task` lanes |
+| Review | `deslop` strips AI-generated slop from the diff before commit, ported from upstream's `cursor-team-kit` plugin |
 | Language | `typescript-best-practices` |
 | Bots | `make-bot-ui` |
 | Help | `poteto-help` |
 | Principles | 24 `principle-*` leaves cited by the playbooks |
 
-`agents/` holds four optional subagent definitions: `poteto-agent` and `comment-sicko`, for imported
-workflows that call those names directly, and `deslop-auditor` and `deslop-reviewer`, the two fable-deslop
-lanes. Install them with the `cp` below; both deslop agents are absent from the task inventory until then.
+`agents/` holds two optional subagent definitions, `poteto-agent` and `comment-sicko`, for imported
+workflows that call those names directly. Install them with the `cp` below; both are absent from the task
+inventory until then.
 
 ## Requirements
 
 - OMP 18.10.4 or newer.
 - Bun, for the `poteto-mode` scripts.
 - `gh`, for the PR playbooks.
-- `ocr` (open-code-review) 1.9.0 or newer, for `fable-deslop`.
 - `trash`, for the worktree-cleanup playbook.
 
 ## Install
@@ -99,6 +98,30 @@ the physical directory under any install root.
 
 `/skill:poteto-help` explains the catalog, including which upstream surfaces have no OMP equivalent.
 
+### Automatic routing
+
+OMP has no session-start hook for skills, so nothing routes to `poteto-mode` on its own. To get the routing
+the other pstack ports inject at startup, append this to `~/.omp/agent/AGENTS.md`:
+
+```markdown
+# pstack Routing
+
+Read `skill://poteto-mode` and follow it when a task meets any of these:
+
+- it touches more than one file, or changes a signature other files call
+- it involves a design or architecture choice
+- it is a bug whose cause is not yet known, or a performance issue
+
+It routes to the matching playbook from there. For smaller tasks, such as a contained change to one file with an obvious test, a question, or a one-line edit, work directly and verify on the real artifact.
+
+When the intent is already specific, read that skill directly: `skill://tdd`, `skill://architect`, `skill://how`, `skill://why`, `skill://arena`, `skill://interrogate`.
+
+Direct user requests take precedence.
+```
+
+`AGENTS.md` loads into every session and survives compaction. Hidden skills stay readable through `skill://`,
+so the instruction works with `disable-model-invocation: true` in place.
+
 ## OMP task behavior
 
 - Use the exact agent names in the live `task` inventory. Omit `agent` to select OMP's default worker.
@@ -115,8 +138,8 @@ the physical directory under any install root.
   version 0.15.36 (`cursor/plugins` at `1ba91fc`).
 - `orchestrate-omp` began as Eric Provencher's
   [`orchestrate`](https://github.com/provencher/codex-skills/tree/main/orchestrate) and is now OMP-native.
-- `pstack-omp`, `fable-deslop`, and the OMP integration, including `setup-pstack`'s model helper, are
-  maintained here.
+- `pstack-omp` and the OMP integration, including `setup-pstack`'s model helper, are maintained here.
+- `deslop` is ported from the [`cursor-team-kit`](https://github.com/cursor/plugins/tree/main/cursor-team-kit) plugin.
 
 See [`THIRD_PARTY_NOTICES.md`](THIRD_PARTY_NOTICES.md) for upstream copyright notices.
 

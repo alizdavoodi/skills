@@ -35,7 +35,7 @@ const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 // counts: upstream writes a Cursor `.mdc` rule, and this port writes OMP's
 // `modelRoles` and `task.agentModelOverrides` through a script, so the two
 // share a name and nothing else.
-const PORT_ONLY = new Set(["fable-deslop", "orchestrate-omp", "pstack-omp", "setup-pstack"]);
+const PORT_ONLY = new Set(["orchestrate-omp", "pstack-omp", "setup-pstack"]);
 
 // Cursor mechanisms that have no OMP equal, or a named replacement. A merged
 // file that gains one needs a translation the merge itself cannot make, and a

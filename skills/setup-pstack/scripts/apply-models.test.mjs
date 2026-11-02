@@ -125,6 +125,21 @@ describe("apply-models", () => {
 		assert.equal(agents.custom, "@smol");
 	});
 
+	test("the librarian default an earlier version wrote is dropped, a custom librarian mapping stays", () => {
+		const stale = run(["--budget", "large"], {
+			config: { "task.agentModelOverrides": { librarian: "@smol" } },
+		});
+		assert.equal(stale.status, 0, stale.stderr);
+		assert.equal(stale.written("task.agentModelOverrides").librarian, undefined);
+		assert.ok(/librarian: dropped/.test(stale.stdout), stale.stdout);
+
+		const custom = run(["--budget", "large"], {
+			config: { "task.agentModelOverrides": { librarian: "@advisor" } },
+		});
+		assert.equal(custom.status, 0, custom.stderr);
+		assert.equal(custom.written("task.agentModelOverrides").librarian, "@advisor");
+	});
+
 	test("an unknown --role name is rejected without writing", () => {
 		const r = run(["--budget", "large", "--role", "bogus=acme/claude-opus-5-5"]);
 		assert.notEqual(r.status, 0);
@@ -301,45 +316,44 @@ describe("review findings", () => {
 	});
 });
 
-describe("deslop lanes", () => {
-	test("each deslop lane defaults to its role", () => {
-		const r = run(["--budget", "large"]);
-		assert.equal(r.status, 0, r.stderr);
-		const agents = r.written("task.agentModelOverrides");
-		assert.equal(agents["deslop-auditor"], "@advisor");
-		assert.equal(agents["deslop-reviewer"], "@deslop");
-		assert.ok(r.written("modelRoles").deslop, "the role the alias reads is filled");
-	});
-
-	test("a fresh resolve puts deslop off advisor's family", () => {
-		const r = run(["--budget", "large"]);
-		assert.equal(r.status, 0, r.stderr);
-		const roles = r.written("modelRoles");
-		assert.notEqual(base(roles.deslop), base(roles.advisor));
-	});
-
-	test("both deslop lanes collapsing onto one model is reported", () => {
+describe("retired deslop keys", () => {
+	test("the deslop role and both lane agents are dropped from a rerun", () => {
 		const r = run(["--budget", "large"], {
-			config: { "task.agentModelOverrides": { "deslop-reviewer": "@advisor" } },
+			config: {
+				modelRoles: { deslop: "beta/gemini-3-pro:high" },
+				"task.agentModelOverrides": { "deslop-auditor": "@advisor", "deslop-reviewer": "@deslop" },
+			},
 		});
 		assert.equal(r.status, 0, r.stderr);
-		assert.ok(/deslop-auditor and deslop-reviewer both resolve to/.test(r.stdout), r.stdout);
+		const roles = r.written("modelRoles");
+		const agents = r.written("task.agentModelOverrides");
+		assert.equal(roles.deslop, undefined, "the role key is dropped");
+		assert.equal(agents["deslop-auditor"], undefined, "the advisor lane is dropped");
+		assert.equal(agents["deslop-reviewer"], undefined, "the deslop lane is dropped");
+		assert.ok(/deslop: dropped, no skill spawns it/.test(r.stdout), r.stdout);
 	});
 
-	test("an explicit deslop selector with an effort wins over the budget", () => {
-		const r = run(["--budget", "medium", "--role", "deslop=beta/gemini-3-pro:high"]);
-		assert.equal(r.status, 0, r.stderr);
-		assert.equal(r.written("modelRoles").deslop, "beta/gemini-3-pro:high");
-	});
-
-	test("the old review-deslop key is renamed, not left beside the new one", () => {
+	test("the old review-deslop key is dropped, not carried to a name nothing spawns", () => {
 		const r = run(["--budget", "large"], {
 			config: { modelRoles: { "review-deslop": "beta/gemini-3-pro:high" } },
 		});
 		assert.equal(r.status, 0, r.stderr);
 		const roles = r.written("modelRoles");
 		assert.equal(roles["review-deslop"], undefined, "the stale key is dropped");
-		assert.equal(base(roles.deslop), "beta/gemini-3-pro", "the model moves to the new name");
-		assert.ok(/review-deslop: renamed to deslop/.test(r.stdout), r.stdout);
+		assert.equal(roles.deslop, undefined, "nothing takes its place");
+	});
+
+	test("a user's own non-pstack deslop mapping stays", () => {
+		const r = run(["--budget", "large"], {
+			config: { "task.agentModelOverrides": { "deslop-auditor": "acme/claude-opus-5-5" } },
+		});
+		assert.equal(r.status, 0, r.stderr);
+		assert.equal(r.written("task.agentModelOverrides")["deslop-auditor"], "acme/claude-opus-5-5");
+	});
+
+	test("an explicit deslop role is refused rather than resurrected", () => {
+		const r = run(["--budget", "medium", "--role", "deslop=beta/gemini-3-pro:high"]);
+		assert.notEqual(r.status, 0);
+		assert.ok(/unknown role/.test(r.stderr), r.stderr);
 	});
 });
