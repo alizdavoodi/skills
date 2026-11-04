@@ -33,7 +33,6 @@ const ROLES = {
 	plan: { tier: "strong", use: "multi-phase plans, architect runners" },
 	advisor: { tier: "strong", use: "judgment and prose: how explainer, why synthesizer, reflect judgment, reviewers" },
 	second_opinion: { tier: "strong", use: "arena cross-judge pool, the second opinion in a panel" },
-	deslop: { tier: "strong", use: "fable-deslop lanes: deletion-first review of the OCR-scoped patch" },
 	task: { tier: "mid", use: "implementers: feature, bug-fix, refactoring, perf-issue, hillclimb, swarm workers" },
 	designer: { tier: "mid", use: "UI and visual work" },
 	vision: { tier: "mid", use: "reading screenshots and design comps", images: true },
@@ -52,7 +51,6 @@ const ROLES = {
 // chat model, so the second opinion lives in pstack's own `second_opinion` role.
 const AGENTS = {
 	scout: "@smol",
-	librarian: "@smol",
 	reviewer: "@advisor",
 	"security-reviewer": "@second_opinion",
 	task: "@task",
@@ -60,19 +58,20 @@ const AGENTS = {
 	"poteto-agent": "@task",
 	"comment-sicko": "@advisor",
 	seance: "@advisor",
-	"deslop-auditor": "@advisor",
-	"deslop-reviewer": "@deslop",
 };
 
 // Roles that must not share a model family with another role when the catalog
-// allows it. `second_opinion` is the second opinion for `advisor`, and `deslop`
-// is the non-advisor lane fable-deslop runs beside `reviewer`.
-const DIVERSE_FROM = { second_opinion: "advisor", deslop: "advisor" };
+// allows it. `second_opinion` is the second opinion for `advisor`.
+const DIVERSE_FROM = { second_opinion: "advisor" };
 
-// Role names this script wrote in an earlier version, mapped to the name that
-// replaced them. Config would otherwise carry the old key forever as a "not a
-// pstack role" entry, and a spawn would still resolve the dead name.
-const RENAMED_ROLES = { "review-deslop": "deslop" };
+// Roles an earlier version wrote that no skill spawns any more. Config would
+// otherwise carry the key forever as a "not a pstack role" entry.
+const RETIRED_ROLES = new Set(["deslop", "review-deslop"]);
+
+// Agents this script mapped in an earlier version that OMP never ships, with the
+// default it wrote. That default is dead config, so a rerun drops it. Any other
+// value is a user's own agent definition and stays.
+const RETIRED_AGENTS = { librarian: "@smol", "deslop-auditor": "@advisor", "deslop-reviewer": "@deslop" };
 
 // omp's `judge` role is a model-kind role. A judgment runner answers `find`, image
 // questions, and `tui.autoGraph: smart`. A tiny or chat model answers prompted
@@ -224,14 +223,12 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	const picked = {};
 	const notes = [];
 
-	// A renamed role carries its value to the current name and drops the old
-	// key. A value already set at the new name stays, and an explicit --role
-	// still wins, since the loops below read the overrides first.
-	for (const [oldRole, newRole] of Object.entries(RENAMED_ROLES)) {
-		if (!Object.hasOwn(currentRoles, oldRole)) continue;
-		if (currentRoles[newRole] == null) currentRoles[newRole] = currentRoles[oldRole];
-		delete currentRoles[oldRole];
-		notes.push(`${oldRole}: renamed to ${newRole}`);
+	// A role no skill spawns any more is dropped, so config does not keep a key
+	// whose selector nothing reads. An explicit --role still rejects the name.
+	for (const role of RETIRED_ROLES) {
+		if (!Object.hasOwn(currentRoles, role)) continue;
+		delete currentRoles[role];
+		notes.push(`${role}: dropped, no skill spawns it`);
 	}
 
 	// Roles outside ROLES are not pstack's; they ride along untouched.
@@ -297,16 +294,10 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	const agents = { ...AGENTS, ...currentAgents, ...agentOverrides };
 	const migrated = new Set();
 
-	// An alias naming a renamed role is dead config whatever wrote it: the old
-	// role no longer exists, so the spawn would fail on an unknown role. Retarget
-	// it rather than reporting a mapping that cannot resolve.
-	for (const [agent, value] of Object.entries(agents)) {
-		if (typeof value !== "string" || !value.startsWith("@")) continue;
-		const target = RENAMED_ROLES[value.slice(1)];
-		if (!target) continue;
-		agents[agent] = `@${target}`;
-		migrated.add(agent);
-		notes.push(`${agent}: migrated ${value} to @${target}, the role was renamed`);
+	for (const [agent, written] of Object.entries(RETIRED_AGENTS)) {
+		if (agents[agent] !== written || Object.hasOwn(agentOverrides, agent)) continue;
+		delete agents[agent];
+		notes.push(`${agent}: dropped, OMP ships no such agent`);
 	}
 
 	// `security-reviewer: @judge` was the default this script wrote before
@@ -357,11 +348,7 @@ function resolve({ budget, roleOverrides, agentOverrides }) {
 	// collapse has two causes, a shared role or two roles on one model, so the
 	// note names the current mappings and the lever for each.
 	const resolvedFor = (v) => (v.startsWith("@") ? roles[v.slice(1)] : v);
-	const panels = [
-		["reviewer", "security-reviewer"],
-		["deslop-auditor", "deslop-reviewer"],
-		["reviewer", "deslop-reviewer"],
-	];
+	const panels = [["reviewer", "security-reviewer"]];
 	for (const [left, right] of panels) {
 		if (!agents[right]) continue;
 		const pair = [left, right].map((a) => split(resolvedFor(agents[a])).base);

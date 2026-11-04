@@ -20,7 +20,7 @@ Use these exact OMP agent names.
 | `planner` | `task` |
 | `designer` | `task` |
 | `reviewer` | `reviewer` |
-| `researcher` | `librarian` |
+| `researcher` | `scout` |
 | `synthesizer` | `reviewer` |
 | `implementer` | `poteto-agent` |
 | `owner` | `poteto-agent` |
@@ -34,7 +34,6 @@ The canonical OMP roster is closed:
 scout
 reviewer
 security-reviewer
-librarian
 task
 sonic
 poteto-agent
@@ -43,8 +42,6 @@ seance
 ```
 
 A canonically routed task item's `agent` value must be one of those bundled names. Canonical role labels and model aliases are not agent names. `task` is the default worker, so omit `agent` for it.
-
-`deslop-auditor` and `deslop-reviewer` sit outside this roster. `skill://fable-deslop` dispatches both directly as its two review lanes, and no canonical pstack role maps to either. They exist only once `agents/deslop-auditor.md` and `agents/deslop-reviewer.md` are installed into `~/.omp/agent/agents/`. OMP's bundled `reviewer` is not a substitute for the `advisor` lane: its contract reports only unintentional defects and skips non-blocking changes, so it cannot answer a deletion-first request.
 
 `poteto-agent` runs `implementer` and `owner` work in poteto's style. `comment-sicko` audits comments for imported skills that name it directly.
 
@@ -89,8 +86,7 @@ Optional fields exist only when their setting is on. Check before writing one:
 - `effort` (`lo`, `med`, `hi`) requires `task.enableEffort`. When it is off, reasoning depth comes from the agent's configured model role, not from the call.
 - `outputSchema` and `schemaMode` require `task.structured`.
 - `tools` exposes eval-defined tools to the child.
-
-Never put a `model` field in a task item. OMP has none.
+- `model` requires `task.perCallModel` set to `on`. It takes one exact `provider/model-id[:level]` that the `task` tool description lists as approved, never a role alias, glob, or list. Preflight rejects it for any agent with a `task.agentModelOverrides` entry, and `/skill:setup-pstack` writes one for every roster agent, so omit it on a configured profile and route by agent.
 
 Keep briefs short and route bulk through `local://<name>.md`, which parent and children share. Do not paste a large payload inline.
 
@@ -244,7 +240,7 @@ The root resolves a child question and sends the answer with `write agent://<id>
 
 OMP resolves a task agent through its current settings, including `modelRoles`, `task.agentModelOverrides`, the agent definition, and normal fallback. Agent selection and model selection are separate decisions.
 
-Do not put a `model` field in a task item. Do not use a model alias as the `agent` value. Configure routing with `/skill:setup-pstack`, which writes both records into the active profile's `config.yml` after validating every selector against the detected catalog.
+Route models by agent, not by the `model` field, for the reason in the task contract above. Do not use a model alias as the `agent` value. Configure routing with `/skill:setup-pstack`, which writes both records into the active profile's `config.yml` after validating every selector against the detected catalog.
 
 `/skill:setup-pstack --show` prints the live agent-to-role mapping. These are settings, not task payload fields. When a playbook requires model independence, read the resolved model each child reports; if two panel agents resolve to the same model, say so rather than claiming a second opinion.
 
