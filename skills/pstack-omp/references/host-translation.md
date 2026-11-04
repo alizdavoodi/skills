@@ -48,7 +48,7 @@ Each substitution is one of these. Name the shape when you audit, because the sh
 | Upstream | OMP | Shape |
 |---|---|---|
 | `~/.cursor/rules/pstack-models.mdc` | `modelRoles` and `task.agentModelOverrides` in `~/.omp/agent/config.yml`, written by `/skill:setup-pstack` | Retarget |
-| `model: <slug>` on a task | no model field exists. The agent's configured role decides. | Retarget |
+| `model: <slug>` on a task | the agent's configured role decides. OMP's `model` field needs `task.perCallModel` and fails preflight for any agent with a `task.agentModelOverrides` entry. | Retarget |
 | `claude-opus-5-5-xhigh`, `grok-4.7-xhigh-fast` defaults | resolved from config. No slug appears in port prose. | Retarget |
 | `inherit-parent`, `auto` | the role is left unset, so it runs on the session model | Rename |
 | a per-role reasoning budget in the `.mdc` rule | `/skill:setup-pstack` writes an effort suffix per tier | Retarget |
